@@ -1,0 +1,20 @@
+services:
+
+  broker:
+    build: ./broker
+    ports:
+      - "1883:1883"
+
+  sensor:
+    build: ./sensor
+    depends_on:
+      - broker
+    stdin_open: true
+    tty: true
+
+  cliente:
+    build: ./cliente
+    depends_on:
+      - broker
+    stdin_open: true
+    tty: true
