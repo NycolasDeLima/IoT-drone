@@ -9,7 +9,6 @@ tcp ?= 1883
 
 build:
 	cd sensor && docker build -t sensor .
-	cd atuador && docker build -t atuador .
 	cd cliente && docker build -t cliente .
 	cd broker && docker build -t broker .
 

@@ -40,12 +40,12 @@ func main() {
 		tipoSensor = "bpm"
 		serverIP = "broker:1883"
 
-		id = tipoSensor + "_1"
+		id = "1"
 
 	} else {
 
 		tipoSensor = os.Args[1]
-		id = tipoSensor + "_" + os.Args[2]
+		id = os.Args[2]
 		serverIP = os.Args[3]
 
 		switch tipoSensor {
@@ -65,15 +65,23 @@ func main() {
 
 	}
 
+	willMsg := Mensagem{
+		Tipo: tipoSensor,
+		ID:   id,
+		Dado: "offline",
+	}
+
+	willPayload, _ := json.Marshal(willMsg)
+
 	opts := pahomqtt.NewClientOptions().
 		AddBroker(serverIP).
 		SetClientID(id).
 		SetCleanSession(false).
 		SetWill(
-			"sensors/status",
-			"offline",
+			"sensors/heartbeat/"+tipoSensor+"_"+id,
+			string(willPayload),
 			1,
-			true,
+			false,
 		)
 
 	opts.SetOnConnectHandler(func(c pahomqtt.Client) {
@@ -90,11 +98,13 @@ func main() {
 		log.Fatal(token.Error())
 	}
 
-	client.Publish("sensors/status", 1, true, Mensagem{
-		Tipo: "SENSOR",
+	statusMsg := Mensagem{
+		Tipo: tipoSensor,
 		ID:   id,
 		Dado: "online",
-	})
+	}
+
+	statusJSON, _ := json.Marshal(statusMsg)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -117,17 +127,22 @@ func main() {
 
 				msg.Dado = strconv.Itoa(dado)
 				msg.ID = id
-				msg.Tipo = "SENSOR"
+				msg.Tipo = tipoSensor
 
 				jsondata, _ := json.Marshal(msg)
 
-				//temp := 20.0 + rand.Float64()*10.0 // 20.0 - 30.0 C
-				//payload := fmt.Sprintf("%.1f", temp)
-
 				token := client.Publish(
-					"sensors/greenhouse/temperature",
+					"sensors/heartbeat/"+tipoSensor+"_"+id,
 					1,
-					true,
+					false,
+					statusJSON,
+				)
+				token.Wait()
+
+				token = client.Publish(
+					"sensors/data/"+tipoSensor+"_"+id,
+					1,
+					false,
 					jsondata,
 				)
 				token.Wait()
