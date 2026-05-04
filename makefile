@@ -46,4 +46,4 @@ cliente:
 	done
 
 broker:
-	cd broker && docker run -p $(udp):$(udp)/udp -p $(tcp):$(tcp)/tcp broker ./app $(udp) $(tcp)
+	cd broker && docker run -p $(tcp):$(tcp)/tcp broker ./app $(id) $(tcp)
