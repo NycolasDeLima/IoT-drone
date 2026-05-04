@@ -2,7 +2,6 @@ package main
 
 import (
 	"log"
-	"net"
 	"os"
 	"os/signal"
 	"sync"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/hashicorp/raft"
 )
 
 const (
@@ -18,25 +18,6 @@ const (
 	Candidate = "candidate"
 )
 
-type Request struct {
-	ID        string
-	Priority  int
-	Timestamp int64
-}
-
-type Command struct {
-	Type      string `json:"type"` // ADD_REQUEST | ALLOCATE
-	RequestID string `json:"request_id"`
-	Priority  int    `json:"priority"`
-	Timestamp int64  `json:"timestamp"`
-	DroneID   string `json:"drone_id"`
-}
-
-type LogEntry struct {
-	Term    int
-	Index   int
-	Command Command
-}
 
 type Message struct {
 	Type string `json:"type"`
@@ -52,7 +33,6 @@ type Message struct {
 	LeaderID     string `json:"leader_id"`
 
 	// log replication
-	Entry        *LogEntry `json:"entry,omitempty"`
 	PrevLogIndex int       `json:"prev_log_index"`
 	PrevLogTerm  int       `json:"prev_log_term"`
 	LeaderCommit int       `json:"leader_commit"`
@@ -60,13 +40,12 @@ type Message struct {
 }
 
 type Node struct {
-	Id   string
+	ID   string
 	Port string
 	Peer []string
 
-	connMu    sync.Mutex
-	Conns     map[string]net.Conn
-	PeerAddrs map[string]string
+	Raft *raft.Raft
+	FSM *FSM
 
 	mqttMu sync.Mutex
 	mqtt   pahomqtt.Client
@@ -78,35 +57,34 @@ func main() {
 	var (
 		id       string
 		mqttPort string
-		tcpPort  string
+		raftPort  string
 		peer     []string
 	)
 
 	if len(os.Args) < 4 {
 		id = "1"
 		mqttPort = ":1883"
-		tcpPort = ":5000"
+		raftPort = ":5000"
 		peer = []string{"192.168.1.5:1884"}
 
 	} else {
 		id = os.Args[1]
 		mqttPort = ":" + os.Args[2]
-		tcpPort = ":" + os.Args[3]
+		raftPort = ":" + os.Args[3]
 		peer = os.Args[4:]
 	}
 
 	node := &Node{
-		Id:   id,
+		ID:   id,
 		Peer: peer,
-		Port: tcpPort,
+		Port: raftPort,
 
-		Conns:     make(map[string]net.Conn),
-		PeerAddrs: make(map[string]string),
+
 	}
 
 	mqttServer := startBroker(mqttPort, id)
 
-	go node.startTcpServer(tcpPort)
+	go node.startTcpServer(raftPort)
 	go node.connectToPeers()
 
 	time.Sleep(1 * time.Second)

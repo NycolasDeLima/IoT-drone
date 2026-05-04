@@ -42,12 +42,12 @@ func (n *Node) handleTcpAccept(conn net.Conn) {
 
 	var handshake Message
 	if err := json.Unmarshal(data, &handshake); err != nil || handshake.Type != "HANDSHAKE" {
-		log.Printf("[%s] Handshake inválido — conexão recusada", n.Id)
+		log.Printf("[%s] Handshake inválido — conexão recusada", n.ID)
 		conn.Close()
 		return
 	}
 
-	resp, _ := json.Marshal(Message{Type: "HANDSHAKE", SenderID: n.Id})
+	resp, _ := json.Marshal(Message{Type: "HANDSHAKE", SenderID: n.ID})
 	conn.Write(append(resp, '\n'))
 
 	n.connMu.Lock()
@@ -56,7 +56,7 @@ func (n *Node) handleTcpAccept(conn net.Conn) {
 	n.PeerAddrs[handshake.SenderID] = net.JoinHostPort(ip, handshake.SenderPort)
 	n.connMu.Unlock()
 
-	log.Printf("[%s] Peer %s conectado", n.Id, handshake.SenderID)
+	log.Printf("[%s] Peer %s conectado", n.ID, handshake.SenderID)
 
 	n.handleTcpConnection(handshake.SenderID, conn)
 
