@@ -25,13 +25,13 @@ func main() {
 		serverIP string
 	)
 
-	if len(os.Args) < 3 {
-		serverIP = "broker:1883"
+	if len(os.Args) < 2 {
+		serverIP = "node1:1883"
 		id = "CLIENTE_1"
 	} else {
 
-		id = "CLIENTE_" + os.Args[2]
-		serverIP = os.Args[3]
+		id = "CLIENTE_" + os.Args[1]
+		serverIP = os.Args[2]
 
 	}
 
@@ -126,6 +126,7 @@ func main() {
 func menu(client pahomqtt.Client) {
 
 	var tipoSensor string
+	var tipoRequest string
 
 	input := bufio.NewReader(os.Stdin)
 
@@ -133,7 +134,7 @@ func menu(client pahomqtt.Client) {
 		fmt.Println("\n===== MENU =====")
 		fmt.Println("1 - Visualizar sensores")
 		fmt.Println("2 - Visualizar dados do sensor")
-		fmt.Println("3 - Visualizar atuadores")
+		fmt.Println("3 - Visualizar drones")
 		fmt.Println("4 - Enviar comando")
 		fmt.Println("5 - Sair")
 		fmt.Print("Escolha: ")
@@ -204,7 +205,39 @@ func menu(client pahomqtt.Client) {
 		case "3":
 			fmt.Println("Visualizando atuadores...")
 		case "4":
-			fmt.Println("Enviando comando...")
+
+			fmt.Println("\n===== ENVIANDO REQUEST =====")
+			fmt.Println("1 - Incêndio")
+			fmt.Println("2 - Acidente")
+			fmt.Print("Escolha o tipo de Request: ")
+			tipoRequest, _ = input.ReadString('\n')
+			tipoRequest = strings.TrimSpace(tipoRequest)
+
+			switch tipoRequest {
+
+			case "1":
+				tipoRequest = "INCENDIO"
+
+			case "2":
+				tipoRequest = "ACIDENTE"
+
+			default:
+				fmt.Println("\nOpção inválida!")
+				continue
+			}
+
+			cmd := Command{
+				Type:      AddRequest,
+				RequestID: fmt.Sprintf("%s-%d", tipoRequest, time.Now().UnixNano()),
+				Priority:  1,
+			}
+
+			data, _ := json.Marshal(cmd)
+			token := client.Publish("drone/requests", 1, false, data)
+			token.Wait()
+
+			fmt.Printf("\nRequest %s enviado com sucesso!\n", cmd.ID)
+
 		case "5":
 			fmt.Println("Saindo...")
 			os.Exit(0)

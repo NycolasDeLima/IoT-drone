@@ -3,25 +3,41 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"time"
+
+	"github.com/hashicorp/raft"
 )
 
-func (n *Node) startTcpServer(tcpPort string) {
+const (
+	Forward = "FORWARD"
+	Ack     = "ACK"
+	Error   = "ERROR"
+)
+
+type Mensagem struct {
+	Type    string          `json:"type"` // FORWARD | ACK | ERROR
+	ID      string          `json:"id"`
+	Payload json.RawMessage `json:"payload"`
+	Error   string          `json:"error,omitempty"`
+}
+
+func (n *Node) startTcpServer() {
 	// Implementação do servidor TCP para comunicação entre nós
 
-	listenner, err := net.Listen("tcp", tcpPort)
+	listenner, err := net.Listen("tcp", n.TcpPort)
 	if err != nil {
-		log.Fatalf("[%s] Erro ao iniciar servidor TCP: %v", n.Id, err)
+		log.Fatalf("[%s] Erro ao iniciar servidor TCP: %v", n.ID, err)
 	}
 
-	log.Printf("[%s] Servidor TCP iniciado na porta %s", n.Id, tcpPort)
+	log.Printf("[%s] Servidor TCP iniciado na porta %s", n.ID, n.TcpPort)
 
 	for {
 		conn, err := listenner.Accept()
 		if err != nil {
-			log.Printf("[%s] Erro ao aceitar conexão TCP: %v", n.Id, err)
+			log.Printf("[%s] Erro ao aceitar conexão TCP: %v", n.ID, err)
 			continue
 		}
 
@@ -31,194 +47,199 @@ func (n *Node) startTcpServer(tcpPort string) {
 }
 
 func (n *Node) handleTcpAccept(conn net.Conn) {
+	defer conn.Close()
 
-	reader := bufio.NewReader(conn)
+	scanner := bufio.NewReader(conn)
 
-	data, err := reader.ReadBytes('\n')
+	log.Printf("[%s] Conexão aceita %s", n.ID, conn.RemoteAddr().String())
+
+	data, err := scanner.ReadBytes('\n')
 	if err != nil {
-		conn.Close()
+		log.Printf("[%s] Erro ao ler dados TCP: %v", n.ID, err)
 		return
 	}
 
-	var handshake Message
-	if err := json.Unmarshal(data, &handshake); err != nil || handshake.Type != "HANDSHAKE" {
-		log.Printf("[%s] Handshake inválido — conexão recusada", n.ID)
-		conn.Close()
+	var msg Mensagem
+	err = json.Unmarshal(data, &msg)
+	if err != nil {
+		log.Printf("[%s] Erro ao processar mensagem TCP: %v", n.ID, err)
 		return
 	}
 
-	resp, _ := json.Marshal(Message{Type: "HANDSHAKE", SenderID: n.ID})
-	conn.Write(append(resp, '\n'))
-
-	n.connMu.Lock()
-	n.Conns[handshake.SenderID] = conn
-	ip, _, _ := net.SplitHostPort(conn.RemoteAddr().String())
-	n.PeerAddrs[handshake.SenderID] = net.JoinHostPort(ip, handshake.SenderPort)
-	n.connMu.Unlock()
-
-	log.Printf("[%s] Peer %s conectado", n.ID, handshake.SenderID)
-
-	n.handleTcpConnection(handshake.SenderID, conn)
+	switch msg.Type {
+	case Forward:
+		log.Printf("[%s] Comando recebido via TCP para encaminhamento: %s", n.ID, string(msg.Payload))
+		n.handleForward(msg, conn)
+	default:
+		log.Printf("[%s] Tipo de mensagem TCP desconhecida: %s", n.ID, msg.Type)
+	}
 
 }
 
-func (n *Node) connectToPeers() {
-	// Implementação para conectar aos peers listados em n.Peer
+func (n *Node) handleForward(msg Mensagem, conn net.Conn) {
+
+	if n.Raft.State() != raft.Leader {
+		response := Mensagem{
+			Type:  Error,
+			ID:    msg.ID,
+			Error: "Este nó não é o líder, comando deve ser encaminhado para o líder",
+		}
+		respData, _ := json.Marshal(response)
+		conn.Write(append(respData, '\n'))
+		return
+	}
+
+	future := n.Raft.Apply(msg.Payload, 5*time.Second)
+
+	if future.Error() != nil {
+		log.Printf("[%s] Erro ao aplicar comando recebido via TCP: %v", n.ID, future.Error())
+		response := Mensagem{
+			Type:  Error,
+			ID:    msg.ID,
+			Error: future.Error().Error(),
+		}
+		respData, _ := json.Marshal(response)
+		conn.Write(append(respData, '\n'))
+		return
+	} else {
+		log.Printf("[%s] Comando recebido via TCP aplicado com sucesso", n.ID)
+		go n.allocation()
+	}
+
+	response := Mensagem{
+		Type:  Ack,
+		ID:    msg.ID,
+		Error: "",
+	}
+	respData, _ := json.Marshal(response)
+	conn.Write(append(respData, '\n'))
+
+	log.Printf("[%s] Comando encaminhado processado e aplicado com sucesso: %s", n.ID, string(msg.Payload))
+
+}
+
+func (n *Node) ToLeader(data []byte) error {
+
+	var leaderIP string
+
+	leader, leaderID := n.Raft.LeaderWithID()
+
+	if leader == "" {
+		log.Printf("[%s] Nenhum líder encontrado", n.ID)
+		return fmt.Errorf("Nenhum líder encontrado")
+	}
+
+	log.Printf("[%s] Leader: '%s'", n.ID, leader)
+
+	future := n.Raft.GetConfiguration()
+	if err := future.Error(); err != nil {
+		log.Printf("[%s] Erro ao obter configuração do cluster: %v", n.ID, err)
+		return fmt.Errorf("Erro ao obter configuração do cluster: %v", err)
+	}
+
+	log.Printf("[%s] Líder identificado: %s (ID: %s)", n.ID, leader, leaderID)
 
 	for _, p := range n.Peer {
-		go func(addr string) {
-			for {
-				n.tryConnectPeer(addr)
-				time.Sleep(2 * time.Second)
-			}
-		}(p)
 
-	}
-
-}
-
-func (n *Node) tryConnectPeer(addr string) {
-
-	// verifica se já há conexão ativa para este endereço
-	n.connMu.Lock()
-	for _, peerAddr := range n.PeerAddrs {
-		if peerAddr == addr {
-			n.connMu.Unlock()
-			return
+		id, ip, _, tcpPort, err := splitPeer(p)
+		if err != nil {
+			log.Printf("[%s] Erro ao processar peer %s: %v", n.ID, p, err)
+			continue
 		}
-	}
-	n.connMu.Unlock()
 
-	conn, err := net.DialTimeout("tcp", addr, time.Second)
-	if err != nil {
+		log.Printf("[%s] Verificando peer %s (Raft: %s)", n.ID, p, id)
 
-		return
-	}
+		if id == string(leaderID) {
 
-	handshake, _ := json.Marshal(Message{Type: "HANDSHAKE",
-		SenderID: n.Id, SenderPort: n.Port})
-	conn.Write(append(handshake, '\n'))
+			leaderIP = net.JoinHostPort(ip, tcpPort)
+			break
 
-	reader := bufio.NewReader(conn)
-	data, err := reader.ReadBytes('\n')
-	if err != nil {
-		conn.Close()
+		}
 
-		return
 	}
 
-	var resp Message
-	if err := json.Unmarshal(data, &resp); err != nil || resp.Type != "HANDSHAKE" {
-		log.Printf("[%s] Handshake inválido com %s", n.Id, addr)
-		conn.Close()
-
-		return
+	env := Mensagem{
+		Type:    Forward,
+		ID:      fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
+		Payload: data,
 	}
 
-	n.connMu.Lock()
-	_, jaExiste := n.Conns[resp.SenderID]
-	if jaExiste {
-		if n.Id > resp.SenderID {
-			// mantém a atual, fecha nova
+	if leaderIP == "" {
+		log.Printf("[%s] Líder não encontrado entre os peers", n.ID)
+		return fmt.Errorf("Líder não encontrado entre os peers")
+	}
+
+	for i := 0; i < 3; i++ {
+
+		conn, err := net.DialTimeout("tcp", leaderIP, 2*time.Second)
+		if err != nil {
+			log.Printf("[%s] Erro ao conectar ao líder: %v", n.ID, err)
+			continue
+		}
+
+		conn.SetDeadline(time.Now().Add(3 * time.Second))
+
+		msgData, _ := json.Marshal(env)
+
+		_, err = conn.Write(append(msgData, '\n'))
+		if err != nil {
+			log.Printf("[%s] Erro ao enviar dados para o líder: %v", n.ID, err)
 			conn.Close()
-			n.connMu.Unlock()
-			return
-		} else {
-			// substitui pela nova
-			oldConn := n.Conns[resp.SenderID]
-			oldConn.Close()
-			n.Conns[resp.SenderID] = conn
-			n.PeerAddrs[resp.SenderID] = addr
-			n.connMu.Unlock()
-			log.Printf("[%s] Conexão duplicada com %s — descartando", n.Id, resp.SenderID)
-		}
-	}
-
-	log.Printf("[%s] Conectado ao peer %s (%s)", n.Id, resp.SenderID, addr)
-	n.handleTcpConnection(resp.SenderID, conn)
-
-	// handleConn retornou — peer desconectou, tenta reconectar
-	log.Printf("[%s] Reconectando a %s...", n.Id, addr)
-}
-
-func (n *Node) handleTcpConnection(peerID string, conn net.Conn) {
-	// Implementação para lidar com mensagens recebidas de outros nós
-
-	defer func() {
-		n.connMu.Lock()
-		if n.Conns[peerID] == conn {
-			delete(n.Conns, peerID)
+			continue
 		}
 
-		n.connMu.Unlock()
-		conn.Close()
-		log.Printf("[%s] Peer %s desconectado", n.Id, peerID)
-	}()
-
-	var msg Message
-	reader := bufio.NewReader(conn)
-
-	for {
-		buffer, err := reader.ReadString('\n')
+		responseData, err := bufio.NewReader(conn).ReadBytes('\n')
 		if err != nil {
-			return
+			log.Printf("[%s] Erro ao ler resposta do líder: %v", n.ID, err)
+			conn.Close()
+			continue
 		}
 
-		err = json.Unmarshal([]byte(buffer), &msg)
+		var response Mensagem
+		err = json.Unmarshal(responseData, &response)
 		if err != nil {
-			log.Println("JSON inválido:", err)
-			return
+			log.Printf("[%s] Erro ao processar resposta do líder: %v", n.ID, err)
+			conn.Close()
+			continue
 		}
 
-		log.Printf("[%s] Mensagem recebida de %s: %+v\n", n.Id, conn.RemoteAddr(), msg)
+		switch response.Type {
+		case Ack:
+			log.Printf("[%s] Comando encaminhado para o líder com sucesso", n.ID)
+			conn.Close()
+			return nil
+		case Error:
+			log.Printf("[%s] Erro do líder ao processar comando: %v", n.ID, response.Error)
+			conn.Close()
+			return fmt.Errorf("Erro do líder: %v", response.Error)
+		default:
+			log.Printf("[%s] Resposta inesperada do líder: %s", n.ID, response.Type)
+			conn.Close()
+			continue
+		}
 
 	}
 
+	return fmt.Errorf("Falha ao encaminhar comando para o líder após múltiplas tentativas")
 }
 
-func (n *Node) broadcast(msg Message) {
-	n.connMu.Lock()
-	peers := make([]string, len(n.Peer))
-	copy(peers, n.Peer)
-	n.connMu.Unlock()
+func (n *Node) allocation() {
 
-	for _, p := range peers {
-		go n.send(p, msg)
-	}
-}
-
-func (n *Node) send(peerID string, msg Message) (Message, bool) {
-
-	n.connMu.Lock()
-	conn, ok := n.Conns[peerID]
-	n.connMu.Unlock()
-
-	if !ok {
-
-		return Message{}, false
+	if n.Raft.State() != raft.Leader {
+		return
 	}
 
-	data, _ := json.Marshal(msg)
-	data = append(data, '\n')
-
-	conn.SetDeadline(time.Now().Add(2 * time.Second))
-
-	_, err := conn.Write(data)
-	if err != nil {
-		return Message{}, false
+	cmd := Command{
+		Type: Allocate,
+		ID:   fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
 	}
 
-	reader := bufio.NewReader(conn)
-	respData, err := reader.ReadBytes('\n')
-	conn.SetDeadline(time.Time{})
-	if err != nil {
-		return Message{}, false
-	}
+	data, _ := json.Marshal(cmd)
 
-	var resp Message
-	if err := json.Unmarshal(respData, &resp); err != nil {
-		return Message{}, false
+	future := n.Raft.Apply(data, 5*time.Second)
+	if future.Error() != nil {
+		log.Printf("[%s] Erro ao aplicar comando de alocação: %v", n.ID, future.Error())
+	} else {
+		log.Printf("[%s] Comando de alocação aplicado com sucesso", n.ID)
 	}
-	return resp, true
-
 }

@@ -14,11 +14,8 @@ var (
 )
 
 const (
-	ListarSensores  = "LISTAR SENSORES"
-	ListarAtuadores = "LISTAR ATUADORES"
-	AcaoAtuador     = "ACAO ATUADOR"
-	VerDadoSensor   = "VER DADO SENSOR"
-	RemoverInscrito = "REMOVER INSCRITO"
+	Allocate   = "ALLOCATE"
+	AddRequest = "ADD_REQUEST"
 )
 
 // ================= Protocolo de Comunicação ====================
@@ -34,6 +31,15 @@ type Sensor struct {
 	ID          string `json:"id"`
 	Dado        string `json:"dado"`
 	UltimoVisto time.Time
+}
+
+type Command struct {
+	Type      string `json:"type"` // ADD_REQUEST | ALLOCATE
+	ID        string `json:"id"`
+	RequestID string `json:"request_id"`
+	Priority  int    `json:"priority"`
+	Timestamp int64  `json:"timestamp"`
+	DroneID   string `json:"drone_id"`
 }
 
 func removerSensor() {

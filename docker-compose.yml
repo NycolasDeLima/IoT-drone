@@ -1,20 +1,52 @@
 services:
 
-  broker:
+  node1:
     build: ./broker
+    container_name: node1
     ports:
       - "1883:1883"
+      - "5000:5000"
+      - "6000:6000"
+    command: ["./app", "1", "node1", "1883", "5000", "6000", "t", "2=node2:5001:6001", "3=node3:5002:6002"]
+    volumes:
+      - ./broker/data/node1:/app/data
 
-  sensor:
-    build: ./sensor
-    depends_on:
-      - broker
-    stdin_open: true
-    tty: true
-
-  cliente:
+  client1:
     build: ./cliente
+    container_name: client1
     depends_on:
-      - broker
-    stdin_open: true
-    tty: true
+      - node1
+    command: ["./app", "1", "node1:1883"]
+
+  sensor1:
+    build: ./sensor
+    container_name: sensor1
+    depends_on:
+      - node1
+    command: ["./app", "bpm", "1", "node1:1883"]
+
+  node2:
+    build: ./broker
+    container_name: node2
+    depends_on:
+      - node1
+    ports:
+      - "1884:1883"
+      - "5001:5001"
+      - "6001:6001"
+    command: ["./app", "2", "node2", "1883", "5001", "6001", "f", "1=node1:5000:6000", "3=node3:5002:6002"]
+    volumes:
+      - ./broker/data/node2:/app/data
+
+  node3:
+    build: ./broker
+    container_name: node3
+    depends_on:
+      - node1
+    ports:
+      - "1885:1883"
+      - "5002:5002"
+      - "6002:6002"
+    command: ["./app", "3", "node3", "1883", "5002", "6002", "f", "1=node1:5000:6000", "2=node2:5001:6001"]
+    volumes:
+      - ./broker/data/node3:/app/data

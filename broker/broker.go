@@ -1,9 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -12,40 +14,15 @@ import (
 	"github.com/hashicorp/raft"
 )
 
-const (
-	Follower  = "follower"
-	Leader    = "leader"
-	Candidate = "candidate"
-)
-
-
-type Message struct {
-	Type string `json:"type"`
-
-	SenderID   string `json:"sender_id"`
-	SenderPort string `json:"sender_port"`
-
-	Term         int    `json:"term"`
-	CandidateID  string `json:"candidate_id"`
-	LastLogIndex int    `json:"last_log_index"`
-	LastLogTerm  int    `json:"last_log_term"`
-	VoteGranted  bool   `json:"vote_granted"`
-	LeaderID     string `json:"leader_id"`
-
-	// log replication
-	PrevLogIndex int       `json:"prev_log_index"`
-	PrevLogTerm  int       `json:"prev_log_term"`
-	LeaderCommit int       `json:"leader_commit"`
-	Ack          bool      `json:"ack,omitempty"`
-}
-
 type Node struct {
-	ID   string
-	Port string
-	Peer []string
+	ID       string
+	IP       string
+	RaftPort string
+	TcpPort  string
+	Peer     []string
 
 	Raft *raft.Raft
-	FSM *FSM
+	FSM  *FSM
 
 	mqttMu sync.Mutex
 	mqtt   pahomqtt.Client
@@ -53,43 +30,95 @@ type Node struct {
 
 func main() {
 
-	// Parâmetros: id, mqttPort, tcpPort, peer1, peer2, ...
+	// Parâmetros: id, ip, mqttPort, tcpPort, peer1, peer2, ...
 	var (
-		id       string
-		mqttPort string
+		id        string
+		ip        string
+		tcpPort   string
+		mqttPort  string
 		raftPort  string
-		peer     []string
+		firstPeer string
+		peer      []string
 	)
 
-	if len(os.Args) < 4 {
+	if len(os.Args) < 6 {
 		id = "1"
+		ip = "0.0.0.0"
 		mqttPort = ":1883"
 		raftPort = ":5000"
-		peer = []string{"192.168.1.5:1884"}
+		tcpPort = ":6000"
+		firstPeer = ""
+		peer = []string{}
 
 	} else {
 		id = os.Args[1]
-		mqttPort = ":" + os.Args[2]
-		raftPort = ":" + os.Args[3]
-		peer = os.Args[4:]
+		ip = os.Args[2]
+		mqttPort = ":" + os.Args[3]
+		raftPort = ":" + os.Args[4]
+		tcpPort = ":" + os.Args[5]
+		firstPeer = os.Args[6]
+		peer = os.Args[7:]
 	}
 
 	node := &Node{
-		ID:   id,
-		Peer: peer,
-		Port: raftPort,
-
-
+		ID:       id,
+		IP:       ip,
+		Peer:     peer,
+		RaftPort: raftPort,
+		TcpPort:  tcpPort,
 	}
 
-	mqttServer := startBroker(mqttPort, id)
+	node.setupRaft()
 
-	go node.startTcpServer(raftPort)
-	go node.connectToPeers()
+	if firstPeer == "t" {
+
+		node.Raft.BootstrapCluster(raft.Configuration{
+			Servers: []raft.Server{
+				{
+					ID:      raft.ServerID(node.ID),
+					Address: raft.ServerAddress(node.IP + node.RaftPort),
+				},
+			},
+		})
+	}
+
+	go node.addPeers()
+
+	time.Sleep(1 * time.Second)
+
+	go node.startTcpServer()
+
+	time.Sleep(1 * time.Second)
+
+	mqttServer := startBroker(mqttPort, id)
 
 	time.Sleep(1 * time.Second)
 
 	go node.connectMQTTBroker(mqttPort)
+
+	/*
+
+		go func() {
+
+			for {
+
+				node.allocation()
+				time.Sleep(300 * time.Millisecond)
+			}
+
+		}()
+
+	*/
+
+	go func() {
+		for {
+			time.Sleep(30 * time.Second)
+
+			if node.Raft.State() == raft.Leader {
+				node.FSM.cleanupProcessed(60)
+			}
+		}
+	}()
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -97,4 +126,27 @@ func main() {
 
 	log.Println("Shutting down broker...")
 	mqttServer.Close()
+}
+
+func splitPeer(peer string) (string, string, string, string, error) {
+
+	parts := strings.Split(peer, "=")
+
+	if len(parts) != 2 {
+		return "", "", "", "", fmt.Errorf("Peer inválido: %s", peer)
+	}
+
+	id := parts[0]
+
+	parts = strings.Split(parts[1], ":")
+
+	if len(parts) != 3 {
+		return "", "", "", "", fmt.Errorf("Endereço inválido: %s", parts[1])
+	}
+
+	ip := parts[0]
+	raftPort := parts[1]
+	tcpPort := parts[2]
+
+	return id, ip, raftPort, tcpPort, nil
 }
