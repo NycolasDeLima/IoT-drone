@@ -68,6 +68,11 @@ func (n *Node) connectMQTTBroker(mqttPort string) {
 		token.Wait()
 		token = c.Subscribe("drone/status", 1, nil)
 		token.Wait()
+		token = c.Subscribe("drone/heartbeat/#", 1, nil)
+		token.Wait()
+		token = c.Subscribe("drone/responses", 1, nil)
+		token.Wait()
+
 	})
 
 	opts.SetDefaultPublishHandler(func(c pahomqtt.Client, msg pahomqtt.Message) {
@@ -108,6 +113,7 @@ func (n *Node) handleRequest(payload []byte) {
 		Type:      msg.Tipo,
 		ID:        fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
 		Timestamp: time.Now().Unix(),
+		DispID:    msg.ID,
 		Setor:     n.ID,
 	}
 
@@ -123,10 +129,6 @@ func (n *Node) handleRequest(payload []byte) {
 
 		cmd.Priority = priority
 		cmd.Dado = msg.Request
-
-	case AddDrone:
-
-		cmd.DroneID = msg.ID
 
 	}
 
@@ -150,6 +152,38 @@ func (n *Node) handleRequest(payload []byte) {
 			log.Printf("[%s] Erro ao encaminhar comando para o líder via MQTT: %v", n.ID, err)
 		} else {
 			log.Printf("[%s] Comando recebido via MQTT encaminhado para o líder com sucesso", n.ID)
+		}
+	}
+}
+
+func (n *Node) listenAllocations() {
+
+	for allocation := range n.FSM.allocations {
+
+		if allocation.Drone.Setor == n.ID {
+
+			payload := MensagemMQTT{
+
+				Tipo:    Task,
+				ID:      allocation.Request.ID,
+				Dado:    allocation.Request.Setor,
+				Request: allocation.Request.Request,
+			}
+
+			payloadJSON, _ := json.Marshal(payload)
+
+			token := n.mqtt.Publish(
+				"drone/tasks/"+allocation.Drone.ID,
+				1,
+				false,
+				payloadJSON,
+			)
+			token.Wait()
+
+			log.Printf("[%s] Request enviada ao drone %s",
+				n.ID,
+				allocation.Drone.ID,
+			)
 		}
 	}
 }

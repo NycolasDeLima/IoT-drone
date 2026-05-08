@@ -29,6 +29,7 @@ type Node struct {
 
 	allocating   bool
 	allocationMu sync.Mutex
+	allocationCh chan AllocationResquest
 }
 
 func main() {
@@ -64,12 +65,27 @@ func main() {
 	}
 
 	node := &Node{
-		ID:       id,
-		IP:       ip,
-		Peer:     peer,
-		RaftPort: raftPort,
-		TcpPort:  tcpPort,
+		ID:           id,
+		IP:           ip,
+		Peer:         peer,
+		RaftPort:     raftPort,
+		TcpPort:      tcpPort,
+		allocationCh: make(chan AllocationResquest),
 	}
+
+	time.Sleep(1 * time.Second)
+
+	mqttServer := startBroker(mqttPort, id)
+
+	time.Sleep(1 * time.Second)
+
+	node.connectMQTTBroker(mqttPort)
+
+	time.Sleep(1 * time.Second)
+
+	go node.startTcpServer()
+
+	time.Sleep(1 * time.Second)
 
 	node.setupRaft()
 
@@ -87,32 +103,6 @@ func main() {
 
 	go node.addPeers()
 
-	time.Sleep(1 * time.Second)
-
-	go node.startTcpServer()
-
-	time.Sleep(1 * time.Second)
-
-	mqttServer := startBroker(mqttPort, id)
-
-	time.Sleep(1 * time.Second)
-
-	go node.connectMQTTBroker(mqttPort)
-
-	/*
-
-		go func() {
-
-			for {
-
-				node.allocation()
-				time.Sleep(300 * time.Millisecond)
-			}
-
-		}()
-
-	*/
-
 	go func() {
 		for {
 			time.Sleep(30 * time.Second)
@@ -122,6 +112,8 @@ func main() {
 			}
 		}
 	}()
+
+	go node.cleanupDrones()
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)

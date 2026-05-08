@@ -13,10 +13,13 @@ import (
 )
 
 type Drone struct {
-	ID             string
-	State          string
+	ID    string
+	State string
+
 	TaskProcessing string
 	Task           string
+	SetorTask      string
+	ClientTask     string
 
 	Conected bool
 	Setor    string

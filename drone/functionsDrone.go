@@ -20,13 +20,19 @@ const (
 
 	AddDrone    = "ADD_DRONE"
 	RemoveDrone = "REMOVE_DRONE"
+
+	Error = "ERROR"
 )
 
-func (d *Drone) executarTarefa(id string, dado string) {
+func (d *Drone) executarTarefa(msg Mensagem) {
 
 	d.State = Busy
 
-	d.Task = dado
+	d.Task = msg.Request
+
+	d.SetorTask = msg.Dado
+
+	d.ClientTask = msg.ID
 
 	d.TaskProcessing = "0%"
 
@@ -42,9 +48,10 @@ func (d *Drone) executarTarefa(id string, dado string) {
 	d.TaskProcessing = ""
 
 	TarefaCompleta := Mensagem{
-		Tipo: TaskCompleted,
-		ID:   id,
-		Dado: dado,
+		Tipo:    TaskCompleted,
+		ID:      d.ID,
+		Request: msg.Request,
+		Dado:    msg.ID,
 	}
 
 	tarefaJSON, _ := json.Marshal(TarefaCompleta)
@@ -69,6 +76,8 @@ func (d *Drone) exibirPainel(msg string) {
 	fmt.Printf("ID             : %s\n", d.ID)
 	if d.Task != "" {
 		fmt.Printf("Tarefa Atual   : %s (%s)\n", d.Task, d.TaskProcessing)
+		fmt.Printf("Setor da Tarefa: %s\n", d.SetorTask)
+		fmt.Printf("Cliente da Tarefa: %s\n", d.ClientTask)
 	} else {
 		fmt.Printf("Tarefa Atual   : Nenhuma\n")
 	}
@@ -107,9 +116,10 @@ func (d *Drone) handleMensagemMQTT(c pahomqtt.Client, msg pahomqtt.Message) {
 		if d.State == Busy {
 
 			response := Mensagem{
-				Tipo: "ERROR",
-				ID:   msgT.ID,
-				Dado: fmt.Sprintf("Drone ocupado, não pode executar nova tarefa: %s", payload),
+				Tipo:    Error,
+				ID:      d.ID,
+				Request: msgT.Request,
+				Dado:    msgT.ID,
 			}
 
 			respData, _ := json.Marshal(response)
@@ -127,7 +137,7 @@ func (d *Drone) handleMensagemMQTT(c pahomqtt.Client, msg pahomqtt.Message) {
 		}
 
 		log.Printf("Tarefa recebida para execução: %s\n", payload)
-		d.executarTarefa(msgT.ID, msgT.Dado)
+		d.executarTarefa(msgT)
 
 	default:
 		fmt.Printf("[%s] %s\n", topic, payload)
@@ -157,7 +167,7 @@ func (d *Drone) conectarMQTT(id string, serverIP string) {
 		SetClientID(d.ID).
 		SetCleanSession(false).
 		SetWill(
-			"drone/heartbeat/"+d.ID,
+			"drone/status",
 			string(willPayload),
 			1,
 			false,
@@ -257,7 +267,7 @@ func (d *Drone) tentarConectarBroker(idBroker string, brokerURL string) bool {
 		SetCleanSession(false).
 		SetConnectTimeout(5*time.Second).
 		SetWill(
-			"drone/heartbeat/"+d.ID,
+			"drone/status",
 			string(willPayload),
 			1,
 			false,

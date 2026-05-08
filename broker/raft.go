@@ -3,6 +3,7 @@ package main
 import (
 	"container/heap"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -16,17 +17,34 @@ import (
 )
 
 const (
-	Allocate     = "ALLOCATE"
-	AddRequest   = "ADD_REQUEST"
-	AddDrone     = "ADD_DRONE"
-	ReleaseDrone = "RELEASE_DRONE"
+	Allocate       = "ALLOCATE"
+	AddRequest     = "ADD_REQUEST"
+	AddDrone       = "ADD_DRONE"
+	ReleaseDrone   = "RELEASE_DRONE"
+	DroneHeartbeat = "DRONE_HEARTBET"
+	RemoveDrone    = "REMOVE_DRONE"
 
 	Free = "Livre"
 	Busy = "Ocupado"
+
+	Task          = "TASK"
+	TaskCompleted = "TASK_COMPLETED"
 )
+
+type AllocationResquest struct {
+	Drone   Drone
+	Request Request
+}
+
+type PendingRequest struct {
+	Deadline int64
+	Request  Request
+}
 
 type Request struct {
 	ID        string
+	Setor     string
+	Request   string
 	Priority  int
 	Timestamp int64
 }
@@ -37,7 +55,7 @@ type Command struct {
 	Dado      string `json:"dado"`
 	Priority  int    `json:"priority"`
 	Timestamp int64  `json:"timestamp"`
-	DroneID   string `json:"drone_id"`
+	DispID    string `json:"drone_id"`
 
 	Setor string `json:"setor"`
 }
@@ -47,6 +65,8 @@ type Drone struct {
 	Setor string `json:"setor"`
 
 	Status string `json:"status"`
+
+	LastSeen int64 `json:"last_seen"`
 }
 
 type FSM struct {
@@ -58,6 +78,10 @@ type FSM struct {
 
 	Requests  PriorityQueue
 	requestMu sync.RWMutex
+
+	allocations chan AllocationResquest
+	Pending     map[string]PendingRequest
+	pendingMu   sync.RWMutex
 }
 
 type FSMstate struct {
@@ -100,7 +124,9 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 
 		heap.Push(&f.Requests,
 			Request{
-				ID:        cmd.Dado, // fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
+				ID:        cmd.DispID,
+				Setor:     cmd.Setor,
+				Request:   cmd.Dado, // fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
 				Priority:  cmd.Priority,
 				Timestamp: cmd.Timestamp})
 
@@ -144,40 +170,104 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 		}
 
 		req := heap.Pop(&f.Requests).(Request)
+
 		f.Drones[selectedDrone] = Drone{
 			ID:     selectedDrone,
 			Setor:  f.Drones[selectedDrone].Setor,
 			Status: Busy,
 		}
 
+		sDrone := f.Drones[selectedDrone]
+
 		log.Printf("ALLOCATE: %s -> %s", selectedDrone, req.ID)
 
 		f.droneMu.Unlock()
 		f.requestMu.Unlock()
 
+		f.pendingMu.Lock()
+		f.Pending[selectedDrone] = PendingRequest{
+
+			Deadline: time.Now().Add(30 * time.Second).Unix(),
+			Request:  req,
+		}
+
+		f.pendingMu.Unlock()
+
+		allocation := AllocationResquest{
+
+			Drone:   sDrone,
+			Request: req,
+		}
+
+		select {
+
+		case f.allocations <- allocation:
+
+		default:
+
+		}
+
 	case AddDrone:
 
 		f.droneMu.Lock()
-		f.Drones[cmd.DroneID] = Drone{
-			ID:     cmd.DroneID,
+		f.Drones[cmd.DispID] = Drone{
+			ID:     cmd.DispID,
 			Setor:  cmd.Setor,
 			Status: Free,
 		}
 		f.droneMu.Unlock()
 
-		log.Printf("ADD_DRONE aplicado: %s", cmd.DroneID)
+		log.Printf("ADD_DRONE aplicado: %s", cmd.DispID)
 
 	case ReleaseDrone:
 
 		f.droneMu.Lock()
-		f.Drones[cmd.DroneID] = Drone{
-			ID:     cmd.DroneID,
-			Setor:  cmd.Setor,
+		f.Drones[cmd.DispID] = Drone{
+			ID:     cmd.DispID,
+			Setor:  f.Drones[cmd.DispID].Setor,
 			Status: Free,
 		}
 		f.droneMu.Unlock()
 
-		log.Printf("RELEASE_DRONE aplicado: %s", cmd.DroneID)
+		log.Printf("RELEASE_DRONE aplicado: %s", cmd.DispID)
+
+	case DroneHeartbeat:
+
+		f.droneMu.Lock()
+
+		if d, ok := f.Drones[cmd.DispID]; ok {
+			d.LastSeen = time.Now().Unix() // ou usar now
+			f.Drones[cmd.DispID] = d
+		}
+
+		f.droneMu.Unlock()
+
+	case RemoveDrone:
+
+		f.droneMu.Lock()
+		delete(f.Drones, cmd.DispID)
+		f.droneMu.Unlock()
+
+		log.Printf("REMOVE_DRONE aplicado: %s", cmd.DispID)
+
+	case TaskCompleted:
+
+		f.pendingMu.Lock()
+		delete(f.Pending, cmd.DispID)
+
+		f.pendingMu.Unlock()
+
+		f.droneMu.Lock()
+
+		f.Drones[cmd.DispID] = Drone{
+			ID:     cmd.DispID,
+			Setor:  f.Drones[cmd.DispID].Setor,
+			Status: Free,
+		}
+
+		f.droneMu.Unlock()
+
+		log.Printf("TASK_COMPLETED aplicado: %s", cmd.DispID)
 
 	default:
 		log.Printf("Comando desconhecido: %s", cmd.Type)
@@ -299,9 +389,10 @@ func (n *Node) setupRaft() {
 	config.LogOutput = io.Discard
 
 	fsm := &FSM{
-		Drones:    make(map[string]Drone),
-		Requests:  PriorityQueue{},
-		Processed: make(map[string]int64),
+		Drones:      make(map[string]Drone),
+		Requests:    PriorityQueue{},
+		Processed:   make(map[string]int64),
+		allocations: make(chan AllocationResquest),
 	}
 
 	heap.Init(&fsm.Requests)
@@ -366,5 +457,130 @@ func (n *Node) addPeers() {
 			}
 		}
 
+	}
+}
+
+// Drones
+
+func (n *Node) cleanupDrones() {
+
+	ticker := time.NewTicker(5 * time.Second)
+
+	var expired []string
+
+	for range ticker.C {
+
+		if n.Raft.State() == raft.Leader {
+
+			// Usar Barrier
+
+			n.FSM.droneMu.RLock()
+
+			for id, d := range n.FSM.Drones {
+				if time.Now().Unix()-d.LastSeen > 15 {
+					log.Printf("Drone %s considerado offline, removendo...", id)
+
+					expired = append(expired, id)
+
+				}
+			}
+
+			n.FSM.droneMu.RUnlock()
+
+			for _, id := range expired {
+
+				cmd := Command{
+					Type:      RemoveDrone,
+					ID:        fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
+					DispID:    id,
+					Timestamp: time.Now().Unix(),
+				}
+
+				data, _ := json.Marshal(cmd)
+
+				future := n.Raft.Apply(data, 5*time.Second)
+				if future.Error() != nil {
+					log.Printf("[%s] Erro ao aplicar comando de remoção do drone %s: %v", n.ID, id, future.Error())
+				} else {
+					log.Printf("[%s] Comando de remoção do drone %s aplicado com sucesso", n.ID, id)
+				}
+
+			}
+
+		}
+	}
+
+}
+
+func (n *Node) monitorPendingRequests() {
+
+	// PArou aqui!!!
+
+	ticker := time.NewTicker(5 * time.Second)
+
+	expired := make(map[string]PendingRequest)
+
+	for range ticker.C {
+
+		if n.Raft.State() == raft.Leader {
+
+			now := time.Now().Unix()
+
+			n.FSM.pendingMu.RLock()
+
+			for d, task := range n.FSM.Pending {
+				if now > task.Deadline {
+					log.Printf("[%s] Timeout da task %s",
+						n.ID,
+						task.Request.Request,
+					)
+
+					expired[d] = task
+
+				}
+			}
+
+			n.FSM.pendingMu.RUnlock()
+
+			for d, task := range expired {
+
+				cmd := Command{
+					Type:      AddRequest,
+					ID:        fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
+					Dado:      task.Request.Request,
+					Priority:  task.Request.Priority,
+					DispID:    task.Request.ID,
+					Timestamp: time.Now().Unix(),
+					Setor:     task.Request.Setor,
+				}
+
+				data, _ := json.Marshal(cmd)
+
+				future := n.Raft.Apply(data, 5*time.Second)
+				if future.Error() != nil {
+					log.Printf("[%s] Erro ao aplicar comando de re-adição da Request %s: %v", n.ID, task.Request.Request, future.Error())
+				} else {
+					log.Printf("[%s] Comando de re-adição de Request %s aplicado com sucesso", n.ID, task.Request.Request)
+				}
+
+				cmd = Command{
+					Type:      ReleaseDrone,
+					ID:        fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
+					DispID:    d,
+					Timestamp: time.Now().Unix(),
+				}
+
+				data, _ = json.Marshal(cmd)
+
+				future = n.Raft.Apply(data, 5*time.Second)
+				if future.Error() != nil {
+					log.Printf("[%s] Erro ao aplicar comando de re-adição da Request %s: %v", n.ID, task.Request.Request, future.Error())
+				} else {
+					log.Printf("[%s] Comando de re-adição de Request %s aplicado com sucesso", n.ID, task.Request.Request)
+				}
+
+			}
+
+		}
 	}
 }
