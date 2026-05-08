@@ -5,9 +5,9 @@ services:
     container_name: node1
     ports:
       - "1883:1883"
-      - "5000:5000"
+      - "5001:5001"
       - "6000:6000"
-    command: ["./app", "1", "node1", "1883", "5000", "6000", "t", "2=node2:5001:6001", "3=node3:5002:6002"]
+    command: ["./app", "1", "node1", "1883", "5001", "6000", "t", "2=node2:5002:6001", "3=node3:5003:6002"]
     volumes:
       - ./broker/data/node1:/app/data
 
@@ -25,6 +25,14 @@ services:
       - node1
     command: ["./app", "bpm", "1", "node1:1883"]
 
+  drone1:
+    build: ./drone
+    container_name: drone1
+    depends_on:
+      - node1
+    command: ["./app", "1", "1=node1:1883", "2=node2:1884", "3=node3:1885"]
+
+
   node2:
     build: ./broker
     container_name: node2
@@ -32,9 +40,9 @@ services:
       - node1
     ports:
       - "1884:1883"
-      - "5001:5001"
+      - "5002:5002"
       - "6001:6001"
-    command: ["./app", "2", "node2", "1883", "5001", "6001", "f", "1=node1:5000:6000", "3=node3:5002:6002"]
+    command: ["./app", "2", "node2", "1883", "5002", "6001", "f", "1=node1:5001:6000", "3=node3:5003:6002"]
     volumes:
       - ./broker/data/node2:/app/data
 
@@ -45,8 +53,8 @@ services:
       - node1
     ports:
       - "1885:1883"
-      - "5002:5002"
+      - "5003:5003"
       - "6002:6002"
-    command: ["./app", "3", "node3", "1883", "5002", "6002", "f", "1=node1:5000:6000", "2=node2:5001:6001"]
+    command: ["./app", "3", "node3", "1883", "5003", "6002", "f", "1=node1:5001:6000", "2=node2:5002:6001"]
     volumes:
       - ./broker/data/node3:/app/data

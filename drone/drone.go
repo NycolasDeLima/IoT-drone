@@ -19,43 +19,50 @@ type Drone struct {
 	Task           string
 
 	Conected bool
-	Setor    []string
+	Setor    string
+	Brokers  []string
 	Client   pahomqtt.Client
 }
 
 type Mensagem struct {
-	Tipo string `json:"tipo"`
-	ID   string `json:"id"`
-	Dado string `json:"dado"`
+	Tipo    string `json:"tipo"`
+	ID      string `json:"id"`
+	Dado    string `json:"dado"`
+	Request string `json:"request"`
 }
 
 func main() {
 
 	var (
-		id       string
-		serverIP string
-		setors   []string
+		id      string
+		server  string
+		brokers []string
 	)
 
 	if len(os.Args) < 3 {
-		serverIP = "broker:1883"
+		server = "broker:1883"
 		id = "1"
-		setors = []string{}
+		brokers = []string{}
 	} else {
 
 		id = os.Args[1]
-		serverIP = os.Args[2]
-		setors = os.Args[3:]
+		server = os.Args[2]
+		brokers = os.Args[3:]
 
 	}
 
 	drone := Drone{
-		ID:    id,
-		State: Free,
-		Setor: setors,
+		ID:      id,
+		State:   Free,
+		Brokers: brokers,
 	}
 
-	drone.conectarMQTT(serverIP)
+	brokerID, brokerIP, err := splitPeer(server)
+	if err != nil {
+		log.Fatalf("Erro ao processar server %s: %v\n", server, err)
+	}
+
+	drone.conectarMQTT(brokerID, brokerIP)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -69,7 +76,7 @@ func main() {
 			case <-ticker.C:
 
 				heartBeat := Mensagem{
-					Tipo: "HEARTBEAT",
+					Tipo: Heartbeat,
 					ID:   drone.ID,
 					Dado: "Conectado",
 				}
@@ -83,7 +90,7 @@ func main() {
 				)
 				token.Wait()
 
-				drone.exibirPainel()
+				drone.exibirPainel("")
 			}
 		}
 	}()

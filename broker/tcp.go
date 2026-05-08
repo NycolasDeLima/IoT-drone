@@ -103,7 +103,7 @@ func (n *Node) handleForward(msg Mensagem, conn net.Conn) {
 		return
 	} else {
 		log.Printf("[%s] Comando recebido via TCP aplicado com sucesso", n.ID)
-		go n.allocation()
+		n.allocation()
 	}
 
 	response := Mensagem{
@@ -225,21 +225,48 @@ func (n *Node) ToLeader(data []byte) error {
 
 func (n *Node) allocation() {
 
-	if n.Raft.State() != raft.Leader {
+	n.allocationMu.Lock()
+
+	if n.allocating {
+		n.allocationMu.Unlock()
 		return
 	}
 
-	cmd := Command{
-		Type: Allocate,
-		ID:   fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
-	}
+	n.allocating = true
 
-	data, _ := json.Marshal(cmd)
+	n.allocationMu.Unlock()
 
-	future := n.Raft.Apply(data, 5*time.Second)
-	if future.Error() != nil {
-		log.Printf("[%s] Erro ao aplicar comando de alocação: %v", n.ID, future.Error())
-	} else {
-		log.Printf("[%s] Comando de alocação aplicado com sucesso", n.ID)
-	}
+	go func() {
+
+		defer func() {
+			n.allocationMu.Lock()
+			n.allocating = false
+			n.allocationMu.Unlock()
+		}()
+
+		if n.Raft.State() != raft.Leader {
+			return
+		}
+
+		cmd := Command{
+			Type: Allocate,
+			ID:   fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
+		}
+
+		data, _ := json.Marshal(cmd)
+
+		future := n.Raft.Apply(data, 5*time.Second)
+		if future.Error() != nil {
+			log.Printf("[%s] Erro ao aplicar comando de alocação: %v", n.ID, future.Error())
+		} else {
+			log.Printf("[%s] Comando de alocação aplicado com sucesso", n.ID)
+		}
+
+		allocate, ok := future.Response().(bool)
+		if !ok || !allocate {
+			return
+		}
+
+	}()
+
 }

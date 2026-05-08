@@ -15,6 +15,11 @@ const (
 	Busy = "Ocupado"
 
 	TaskCompleted = "TASK_COMPLETED"
+
+	Heartbeat = "HEARTBEAT"
+
+	AddDrone    = "ADD_DRONE"
+	RemoveDrone = "REMOVE_DRONE"
 )
 
 func (d *Drone) executarTarefa(id string, dado string) {
@@ -54,7 +59,7 @@ func (d *Drone) executarTarefa(id string, dado string) {
 
 }
 
-func (d *Drone) exibirPainel() {
+func (d *Drone) exibirPainel(msg string) {
 
 	limparTela()
 
@@ -68,6 +73,12 @@ func (d *Drone) exibirPainel() {
 		fmt.Printf("Tarefa Atual   : Nenhuma\n")
 	}
 	fmt.Printf("Estado         : %s\n", d.State)
+	if d.Conected {
+		fmt.Printf("Broker Conectado: %s\n", d.Setor)
+	} else {
+		fmt.Printf("Broker Desconectado \n")
+		fmt.Printf("%s\n", msg)
+	}
 	fmt.Println("------------------------------------")
 
 	fmt.Println("====================================")
@@ -77,15 +88,69 @@ func limparTela() {
 	fmt.Print("\033[H\033[2J")
 }
 
-func (d *Drone) conectarMQTT(serverIP string) {
+func (d *Drone) handleMensagemMQTT(c pahomqtt.Client, msg pahomqtt.Message) {
+
+	topic := msg.Topic()
+
+	var msgT Mensagem
+	err := json.Unmarshal(msg.Payload(), &msgT)
+	if err != nil {
+		log.Printf("Error parsing message: %v\n", err)
+		return
+	}
+
+	payload := string(msg.Payload())
+
+	switch {
+	case strings.HasPrefix(topic, "drone/tasks/"+d.ID):
+
+		if d.State == Busy {
+
+			response := Mensagem{
+				Tipo: "ERROR",
+				ID:   msgT.ID,
+				Dado: fmt.Sprintf("Drone ocupado, não pode executar nova tarefa: %s", payload),
+			}
+
+			respData, _ := json.Marshal(response)
+
+			token := c.Publish(
+				"drone/responses/"+d.ID,
+				1,
+				false,
+				respData,
+			)
+			token.Wait()
+
+			log.Printf("Drone ocupado, não pode executar nova tarefa: %s\n", payload)
+			return
+		}
+
+		log.Printf("Tarefa recebida para execução: %s\n", payload)
+		d.executarTarefa(msgT.ID, msgT.Dado)
+
+	default:
+		fmt.Printf("[%s] %s\n", topic, payload)
+	}
+}
+
+func (d *Drone) conectarMQTT(id string, serverIP string) {
 
 	willMsg := Mensagem{
-		Tipo: "HEARTBEAT",
+		Tipo: RemoveDrone,
 		ID:   d.ID,
 		Dado: "Desconectado",
 	}
 
 	willPayload, _ := json.Marshal(willMsg)
+
+	addMsg := Mensagem{
+		Tipo: AddDrone,
+		ID:   d.ID,
+		Dado: "Conectado",
+	}
+
+	addPayload, _ := json.Marshal(addMsg)
 
 	opts := pahomqtt.NewClientOptions().
 		AddBroker(serverIP).
@@ -101,64 +166,148 @@ func (d *Drone) conectarMQTT(serverIP string) {
 	opts.SetOnConnectHandler(func(c pahomqtt.Client) {
 		log.Println("Drone conectado ao broker")
 
+		d.Conected = true
 		token := c.Subscribe("drone/tasks/"+d.ID, 1, nil)
 		token.Wait()
+		token = c.Publish("drone/status", 1, false, addPayload)
+		token.Wait()
+
 	})
 
 	opts.SetConnectionLostHandler(func(c pahomqtt.Client, err error) {
 		log.Printf("Drone connection lost: %v", err)
 		d.Conected = false
 
+		// Tenta reconectar com failover
+		go d.reconectarComFailover()
 	})
 
-	opts.SetDefaultPublishHandler(func(c pahomqtt.Client, msg pahomqtt.Message) {
-		topic := msg.Topic()
-
-		var msgT Mensagem
-		err := json.Unmarshal(msg.Payload(), &msgT)
-		if err != nil {
-			log.Printf("Error parsing message: %v\n", err)
-			return
-		}
-
-		payload := string(msg.Payload())
-
-		switch {
-		case strings.HasPrefix(topic, "drone/tasks/"+d.ID):
-
-			if d.State == Busy {
-
-				response := Mensagem{
-					Tipo: "ERROR",
-					ID:   msgT.ID,
-					Dado: fmt.Sprintf("Drone ocupado, não pode executar nova tarefa: %s", payload),
-				}
-
-				respData, _ := json.Marshal(response)
-
-				token := c.Publish(
-					"drone/responses/"+d.ID,
-					1,
-					false,
-					respData,
-				)
-				token.Wait()
-
-				log.Printf("Drone ocupado, não pode executar nova tarefa: %s\n", payload)
-				return
-			}
-
-			log.Printf("Tarefa recebida para execução: %s\n", payload)
-			d.executarTarefa(msgT.ID, msgT.Dado)
-
-		default:
-			fmt.Printf("[%s] %s\n", topic, payload)
-		}
-	})
+	opts.SetDefaultPublishHandler(d.handleMensagemMQTT)
 
 	client := pahomqtt.NewClient(opts)
 	if token := client.Connect(); token.Wait() && token.Error() != nil {
 		log.Fatal(token.Error())
 	}
 
+	d.Setor = id
+	d.Client = client
+	d.Conected = true
+}
+
+func (d *Drone) reconectarComFailover() {
+	maxRetries := 3
+	delayEntreTentativas := 5 * time.Second
+
+	// Se não houver brokers na lista, não tenta reconectar
+	if len(d.Brokers) == 0 {
+		d.exibirPainel("Nenhum broker alternativo disponível")
+		return
+	}
+
+	for brokerIdx := 0; brokerIdx < len(d.Brokers); brokerIdx++ {
+
+		id, broker, err := splitPeer(d.Brokers[brokerIdx])
+		if err != nil {
+			d.exibirPainel(fmt.Sprintf("Erro ao processar broker %s: %v\n", d.Brokers[brokerIdx], err))
+			continue
+		}
+
+		for tentativa := 0; tentativa < maxRetries; tentativa++ {
+
+			d.exibirPainel(fmt.Sprintf("Tentando conectar ao broker %s (tentativa %d/%d)\n", broker, tentativa+1, maxRetries))
+
+			if d.tentarConectarBroker(id, broker) {
+				d.exibirPainel(fmt.Sprintf("Reconectado com sucesso ao broker: %s\n", broker))
+				d.Conected = true
+				return
+			}
+
+			// Aguarda antes de tentar novamente
+			time.Sleep(delayEntreTentativas)
+		}
+
+		d.exibirPainel(fmt.Sprintf("Falha ao conectar ao broker %s, tentando próximo...\n", broker))
+	}
+
+	d.exibirPainel("Falha ao reconectar em todos os brokers alternativos")
+	d.Conected = false
+}
+
+func (d *Drone) tentarConectarBroker(idBroker string, brokerURL string) bool {
+
+	willMsg := Mensagem{
+		Tipo: RemoveDrone,
+		ID:   d.ID,
+		Dado: "Desconectado",
+	}
+
+	willPayload, _ := json.Marshal(willMsg)
+
+	addMsg := Mensagem{
+		Tipo: AddDrone,
+		ID:   d.ID,
+		Dado: "Conectado",
+	}
+
+	addPayload, _ := json.Marshal(addMsg)
+
+	opts := pahomqtt.NewClientOptions().
+		AddBroker(brokerURL).
+		SetClientID(d.ID+"-failover").
+		SetCleanSession(false).
+		SetConnectTimeout(5*time.Second).
+		SetWill(
+			"drone/heartbeat/"+d.ID,
+			string(willPayload),
+			1,
+			false,
+		)
+
+	opts.SetOnConnectHandler(func(c pahomqtt.Client) {
+		log.Println("Drone conectado ao broker")
+
+		d.Conected = true
+		token := c.Subscribe("drone/tasks/"+d.ID, 1, nil)
+		token.Wait()
+		token = c.Publish("drone/status", 1, false, addPayload)
+		token.Wait()
+
+	})
+
+	opts.SetConnectionLostHandler(func(c pahomqtt.Client, err error) {
+		log.Printf("Drone desconectado do broker %s: %v\n", brokerURL, err)
+		d.Conected = false
+		go d.reconectarComFailover()
+	})
+
+	opts.SetDefaultPublishHandler(d.handleMensagemMQTT)
+
+	client := pahomqtt.NewClient(opts)
+	token := client.Connect()
+
+	if !token.WaitTimeout(5*time.Second) || token.Error() != nil {
+		return false
+	}
+
+	// Atualiza o cliente principal
+	d.Client.Disconnect(100)
+	d.Client = client
+	d.Setor = idBroker
+	d.Conected = true
+	return true
+}
+
+func splitPeer(peer string) (string, string, error) {
+
+	parts := strings.Split(peer, "=")
+
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("Peer inválido: %s", peer)
+	}
+
+	id := parts[0]
+
+	ip := parts[1]
+
+	return id, ip, nil
 }

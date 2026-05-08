@@ -113,7 +113,7 @@ func main() {
 
 	go removerSensor()
 
-	menu(client)
+	menu(client, id)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -123,7 +123,7 @@ func main() {
 	client.Disconnect(250)
 }
 
-func menu(client pahomqtt.Client) {
+func menu(client pahomqtt.Client, id string) {
 
 	var tipoSensor string
 	var tipoRequest string
@@ -226,10 +226,11 @@ func menu(client pahomqtt.Client) {
 				continue
 			}
 
-			cmd := Command{
-				Type:      AddRequest,
-				RequestID: fmt.Sprintf("%s-%d", tipoRequest, time.Now().UnixNano()),
-				Priority:  1,
+			cmd := Mensagem{
+				Tipo:    AddRequest,
+				ID:      id,
+				Request: fmt.Sprintf("%s-%d", tipoRequest, time.Now().UnixNano()),
+				Dado:    "1",
 			}
 
 			data, _ := json.Marshal(cmd)

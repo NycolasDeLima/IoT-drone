@@ -26,6 +26,9 @@ type Node struct {
 
 	mqttMu sync.Mutex
 	mqtt   pahomqtt.Client
+
+	allocating   bool
+	allocationMu sync.Mutex
 }
 
 func main() {

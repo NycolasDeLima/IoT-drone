@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"time"
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
@@ -13,6 +14,13 @@ import (
 	"github.com/mochi-mqtt/server/v2/hooks/auth"
 	"github.com/mochi-mqtt/server/v2/listeners"
 )
+
+type MensagemMQTT struct {
+	Tipo    string `json:"tipo"`
+	ID      string `json:"id"`
+	Dado    string `json:"dado"`
+	Request string `json:"request"`
+}
 
 // inicia servidor MQTT
 func startBroker(mqttPort string, id string) *mqtt.Server {
@@ -58,20 +66,14 @@ func (n *Node) connectMQTTBroker(mqttPort string) {
 		// re-subscribe após reconexão
 		token := c.Subscribe("drone/requests", 1, nil)
 		token.Wait()
+		token = c.Subscribe("drone/status", 1, nil)
+		token.Wait()
 	})
 
 	opts.SetDefaultPublishHandler(func(c pahomqtt.Client, msg pahomqtt.Message) {
-		topic := msg.Topic()
 
-		payload := string(msg.Payload())
+		n.handleRequest(msg.Payload())
 
-		switch topic {
-		case "drone/requests":
-			n.handleRequest(msg.Payload())
-
-		default:
-			log.Printf("[%s] %s\n", topic, payload)
-		}
 	})
 
 	opts.SetConnectionLostHandler(func(_ pahomqtt.Client, err error) {
@@ -95,15 +97,37 @@ func (n *Node) connectMQTTBroker(mqttPort string) {
 
 func (n *Node) handleRequest(payload []byte) {
 
-	var msg map[string]interface{}
-	json.Unmarshal(payload, &msg)
+	var msg MensagemMQTT
+	err := json.Unmarshal(payload, &msg)
+	if err != nil {
+		log.Printf("[%s] Erro ao processar mensagem MQTT: %v", n.ID, err)
+		return
+	}
 
 	cmd := Command{
-		Type:      AddRequest,
+		Type:      msg.Tipo,
 		ID:        fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
-		RequestID: msg["request_id"].(string),
-		Priority:  int(msg["priority"].(float64)),
 		Timestamp: time.Now().Unix(),
+		Setor:     n.ID,
+	}
+
+	switch msg.Tipo {
+	case AddRequest:
+
+		priority, err := strconv.Atoi(msg.Dado)
+
+		if err != nil {
+			log.Println("Erro ao coverter prioridade:", err)
+			return
+		}
+
+		cmd.Priority = priority
+		cmd.Dado = msg.Request
+
+	case AddDrone:
+
+		cmd.DroneID = msg.ID
+
 	}
 
 	data, _ := json.Marshal(cmd)
@@ -117,7 +141,7 @@ func (n *Node) handleRequest(payload []byte) {
 			log.Printf("[%s] Comando recebido via MQTT aplicado com sucesso", n.ID)
 
 			// Mutex!
-			go n.allocation()
+			n.allocation()
 		}
 
 	} else {
