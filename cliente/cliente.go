@@ -45,6 +45,8 @@ func main() {
 
 		token := c.Subscribe("sensors/heartbeat/#", 1, nil)
 		token.Wait()
+		token = c.Subscribe("cliente/responses/"+id, 1, nil)
+		token.Wait()
 	})
 
 	opts.SetDefaultPublishHandler(func(c pahomqtt.Client, msg pahomqtt.Message) {

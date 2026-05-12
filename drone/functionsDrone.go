@@ -16,7 +16,7 @@ const (
 
 	TaskCompleted = "TASK_COMPLETED"
 
-	Heartbeat = "HEARTBEAT"
+	Heartbeat = "DRONE_HEARTBEAT"
 
 	AddDrone    = "ADD_DRONE"
 	RemoveDrone = "REMOVE_DRONE"

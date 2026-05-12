@@ -21,7 +21,7 @@ const (
 	AddRequest     = "ADD_REQUEST"
 	AddDrone       = "ADD_DRONE"
 	ReleaseDrone   = "RELEASE_DRONE"
-	DroneHeartbeat = "DRONE_HEARTBET"
+	DroneHeartbeat = "DRONE_HEARTBEAT"
 	RemoveDrone    = "REMOVE_DRONE"
 
 	Free = "Livre"
@@ -31,7 +31,8 @@ const (
 	TaskCompleted = "TASK_COMPLETED"
 )
 
-type AllocationResquest struct {
+type AllocationRequests struct {
+	Tipo    string
 	Drone   Drone
 	Request Request
 }
@@ -79,20 +80,22 @@ type FSM struct {
 	Requests  PriorityQueue
 	requestMu sync.RWMutex
 
-	allocations chan AllocationResquest
+	allocations chan AllocationRequests
 	Pending     map[string]PendingRequest
 	pendingMu   sync.RWMutex
 }
 
 type FSMstate struct {
-	Drones    map[string]Drone `json:"drones"`
-	Processed map[string]int64 `json:"processed"`
-	Requests  []Request        `json:"requests"`
+	Drones    map[string]Drone          `json:"drones"`
+	Processed map[string]int64          `json:"processed"`
+	Requests  []Request                 `json:"requests"`
+	Pending   map[string]PendingRequest `json:"pending"`
 }
 
 func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 
 	var cmd Command
+	var msgReturn string
 
 	err := json.Unmarshal(logEntry.Data, &cmd)
 	if err != nil {
@@ -107,7 +110,8 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 
 		if now-ts < 60 {
 			f.procMu.Unlock()
-			return nil
+			msgReturn = "Erro: Comando já executado"
+			return msgReturn
 		}
 	}
 
@@ -132,17 +136,17 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 
 		f.requestMu.Unlock()
 
-		log.Println("ADD_REQUEST aplicado:", cmd.Dado)
+		msgReturn = fmt.Sprintf("Request Adicionada: "+
+			"Setor: %s Cliente: %s Request: %s, Prioridade: %d ",
+			cmd.Setor, cmd.DispID, cmd.Dado, cmd.Priority)
 
 	case Allocate:
-
-		// !REMOVER LOOP E COLOCAR GO ROUTINE NO FINAL!
 
 		f.requestMu.Lock()
 
 		if f.Requests.Len() == 0 {
 			f.requestMu.Unlock()
-			return false
+			return "Erro: Sem requests na fila"
 		}
 
 		f.droneMu.Lock()
@@ -166,20 +170,20 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 		if selectedDrone == "" {
 			f.droneMu.Unlock()
 			f.requestMu.Unlock()
-			return false
+			return "Erro: Sem drone Disponível"
 		}
 
 		req := heap.Pop(&f.Requests).(Request)
 
-		f.Drones[selectedDrone] = Drone{
-			ID:     selectedDrone,
-			Setor:  f.Drones[selectedDrone].Setor,
-			Status: Busy,
-		}
+		d := f.Drones[selectedDrone]
+		d.Status = Busy
+		f.Drones[selectedDrone] = d
 
 		sDrone := f.Drones[selectedDrone]
 
-		log.Printf("ALLOCATE: %s -> %s", selectedDrone, req.ID)
+		msgReturn = fmt.Sprintf("%s Alocado: "+
+			"Setor: %s Cliente: %s Request: %s, Prioridade: %d ",
+			selectedDrone, cmd.Setor, cmd.DispID, cmd.Dado, cmd.Priority)
 
 		f.droneMu.Unlock()
 		f.requestMu.Unlock()
@@ -193,8 +197,8 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 
 		f.pendingMu.Unlock()
 
-		allocation := AllocationResquest{
-
+		allocation := AllocationRequests{
+			Tipo:    Task,
 			Drone:   sDrone,
 			Request: req,
 		}
@@ -211,25 +215,28 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 
 		f.droneMu.Lock()
 		f.Drones[cmd.DispID] = Drone{
-			ID:     cmd.DispID,
-			Setor:  cmd.Setor,
-			Status: Free,
+			ID:       cmd.DispID,
+			Setor:    cmd.Setor,
+			Status:   Free,
+			LastSeen: time.Now().Unix(),
 		}
 		f.droneMu.Unlock()
 
-		log.Printf("ADD_DRONE aplicado: %s", cmd.DispID)
+		msgReturn = fmt.Sprintf("Drone Adicionado: %s", cmd.DispID)
 
 	case ReleaseDrone:
 
 		f.droneMu.Lock()
-		f.Drones[cmd.DispID] = Drone{
-			ID:     cmd.DispID,
-			Setor:  f.Drones[cmd.DispID].Setor,
-			Status: Free,
-		}
+		d := f.Drones[cmd.DispID]
+		d.Status = Free
+		f.Drones[cmd.DispID] = d
 		f.droneMu.Unlock()
 
-		log.Printf("RELEASE_DRONE aplicado: %s", cmd.DispID)
+		f.pendingMu.Lock()
+		delete(f.Pending, cmd.DispID)
+		f.pendingMu.Unlock()
+
+		msgReturn = fmt.Sprintf("Drone Liberado: %s", cmd.DispID)
 
 	case DroneHeartbeat:
 
@@ -248,33 +255,48 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 		delete(f.Drones, cmd.DispID)
 		f.droneMu.Unlock()
 
-		log.Printf("REMOVE_DRONE aplicado: %s", cmd.DispID)
+		msgReturn = fmt.Sprintf("Drone Removido: %s", cmd.DispID)
 
 	case TaskCompleted:
 
 		f.pendingMu.Lock()
+		request := f.Pending[cmd.DispID]
 		delete(f.Pending, cmd.DispID)
 
 		f.pendingMu.Unlock()
 
 		f.droneMu.Lock()
 
-		f.Drones[cmd.DispID] = Drone{
-			ID:     cmd.DispID,
-			Setor:  f.Drones[cmd.DispID].Setor,
-			Status: Free,
+		d := f.Drones[cmd.DispID]
+		d.Status = Free
+		f.Drones[cmd.DispID] = d
+
+		allocation := AllocationRequests{
+			Tipo:    TaskCompleted,
+			Drone:   f.Drones[cmd.DispID],
+			Request: request.Request,
 		}
 
 		f.droneMu.Unlock()
 
-		log.Printf("TASK_COMPLETED aplicado: %s", cmd.DispID)
+		select {
+
+		case f.allocations <- allocation:
+
+		default:
+
+		}
+
+		msgReturn = fmt.Sprintf("Request Completada: "+
+			"Setor: %s Cliente: %s Request: %s, Prioridade: %d Drone: %s",
+			cmd.Setor, cmd.DispID, cmd.Dado, cmd.Priority, cmd.DispID)
 
 	default:
-		log.Printf("Comando desconhecido: %s", cmd.Type)
+		msgReturn = fmt.Sprintf("Comando desconhecido: %s", cmd.Type)
 
 	}
 
-	return true
+	return msgReturn
 
 }
 
@@ -296,11 +318,13 @@ func (f *FSM) Snapshot() (raft.FSMSnapshot, error) {
 	f.droneMu.RLock()
 	f.requestMu.RLock()
 	f.procMu.Lock()
+	f.pendingMu.RLock()
 
 	state := FSMstate{
 		Drones:    make(map[string]Drone),
 		Requests:  make([]Request, len(f.Requests)),
 		Processed: make(map[string]int64),
+		Pending:   make(map[string]PendingRequest),
 	}
 
 	for k, v := range f.Drones {
@@ -313,9 +337,14 @@ func (f *FSM) Snapshot() (raft.FSMSnapshot, error) {
 		state.Processed[k] = v
 	}
 
+	for k, v := range f.Pending {
+		state.Pending[k] = v
+	}
+
 	f.droneMu.RUnlock()
 	f.requestMu.RUnlock()
 	f.procMu.Unlock()
+	f.pendingMu.RUnlock()
 
 	return &snapshot{state: state}, nil
 }
@@ -333,9 +362,11 @@ func (f *FSM) Restore(rc io.ReadCloser) error {
 	f.droneMu.Lock()
 	f.requestMu.Lock()
 	f.procMu.Lock()
+	f.pendingMu.Lock()
 
 	f.Drones = state.Drones
 	f.Processed = state.Processed
+	f.Pending = state.Pending
 
 	f.Requests = make(PriorityQueue, len(state.Requests))
 	copy(f.Requests, state.Requests)
@@ -345,6 +376,7 @@ func (f *FSM) Restore(rc io.ReadCloser) error {
 	f.procMu.Unlock()
 	f.requestMu.Unlock()
 	f.droneMu.Unlock()
+	f.pendingMu.Unlock()
 
 	log.Println("FSM restaurado via snapshot")
 
@@ -392,7 +424,8 @@ func (n *Node) setupRaft() {
 		Drones:      make(map[string]Drone),
 		Requests:    PriorityQueue{},
 		Processed:   make(map[string]int64),
-		allocations: make(chan AllocationResquest),
+		allocations: make(chan AllocationRequests, 100),
+		Pending:     make(map[string]PendingRequest),
 	}
 
 	heap.Init(&fsm.Requests)
@@ -466,13 +499,16 @@ func (n *Node) cleanupDrones() {
 
 	ticker := time.NewTicker(5 * time.Second)
 
-	var expired []string
-
 	for range ticker.C {
+
+		expired := []string{}
 
 		if n.Raft.State() == raft.Leader {
 
-			// Usar Barrier
+			barrier := n.Raft.Barrier(5 * time.Second)
+			if barrier.Error() != nil {
+				continue
+			}
 
 			n.FSM.droneMu.RLock()
 
@@ -518,9 +554,9 @@ func (n *Node) monitorPendingRequests() {
 
 	ticker := time.NewTicker(5 * time.Second)
 
-	expired := make(map[string]PendingRequest)
-
 	for range ticker.C {
+
+		expired := make(map[string]PendingRequest)
 
 		if n.Raft.State() == raft.Leader {
 

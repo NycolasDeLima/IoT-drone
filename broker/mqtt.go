@@ -70,7 +70,7 @@ func (n *Node) connectMQTTBroker(mqttPort string) {
 		token.Wait()
 		token = c.Subscribe("drone/heartbeat/#", 1, nil)
 		token.Wait()
-		token = c.Subscribe("drone/responses", 1, nil)
+		token = c.Subscribe("drone/responses/#", 1, nil)
 		token.Wait()
 
 	})
@@ -160,30 +160,61 @@ func (n *Node) listenAllocations() {
 
 	for allocation := range n.FSM.allocations {
 
-		if allocation.Drone.Setor == n.ID {
+		switch allocation.Tipo {
+		case Task:
 
-			payload := MensagemMQTT{
+			if allocation.Drone.Setor == n.ID {
 
-				Tipo:    Task,
-				ID:      allocation.Request.ID,
-				Dado:    allocation.Request.Setor,
-				Request: allocation.Request.Request,
+				payload := MensagemMQTT{
+
+					Tipo:    Task,
+					ID:      allocation.Request.ID,
+					Dado:    allocation.Request.Setor,
+					Request: allocation.Request.Request,
+				}
+
+				payloadJSON, _ := json.Marshal(payload)
+
+				token := n.mqtt.Publish(
+					"drone/tasks/"+allocation.Drone.ID,
+					1,
+					false,
+					payloadJSON,
+				)
+				token.Wait()
+
+				log.Printf("[%s] Request enviada ao drone %s",
+					n.ID,
+					allocation.Drone.ID,
+				)
 			}
+		case TaskCompleted:
 
-			payloadJSON, _ := json.Marshal(payload)
+			if allocation.Request.Setor == n.ID {
 
-			token := n.mqtt.Publish(
-				"drone/tasks/"+allocation.Drone.ID,
-				1,
-				false,
-				payloadJSON,
-			)
-			token.Wait()
+				payload := MensagemMQTT{
 
-			log.Printf("[%s] Request enviada ao drone %s",
-				n.ID,
-				allocation.Drone.ID,
-			)
+					Tipo:    Task,
+					ID:      allocation.Request.ID,
+					Dado:    strconv.Itoa(allocation.Request.Priority),
+					Request: allocation.Request.Request,
+				}
+
+				payloadJSON, _ := json.Marshal(payload)
+
+				token := n.mqtt.Publish(
+					"cliente/responses/"+allocation.Request.ID,
+					1,
+					false,
+					payloadJSON,
+				)
+				token.Wait()
+
+				log.Printf("[%s] Request enviada ao drone %s",
+					n.ID,
+					allocation.Drone.ID,
+				)
+			}
 		}
 	}
 }

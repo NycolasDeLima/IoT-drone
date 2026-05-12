@@ -29,7 +29,7 @@ type Node struct {
 
 	allocating   bool
 	allocationMu sync.Mutex
-	allocationCh chan AllocationResquest
+	allocationCh chan AllocationRequests
 }
 
 func main() {
@@ -70,7 +70,7 @@ func main() {
 		Peer:         peer,
 		RaftPort:     raftPort,
 		TcpPort:      tcpPort,
-		allocationCh: make(chan AllocationResquest),
+		allocationCh: make(chan AllocationRequests, 100),
 	}
 
 	time.Sleep(1 * time.Second)
@@ -103,6 +103,10 @@ func main() {
 
 	go node.addPeers()
 
+	go node.listenAllocations()
+
+	go node.monitorPendingRequests()
+
 	go func() {
 		for {
 			time.Sleep(30 * time.Second)
@@ -114,6 +118,19 @@ func main() {
 	}()
 
 	go node.cleanupDrones()
+
+	/*
+
+		go func() {
+			for {
+				time.Sleep(1 * time.Second)
+
+				if node.Raft.State() == raft.Leader {
+					node.allocation()
+				}
+			}
+			}()
+	*/
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)

@@ -29,15 +29,15 @@ func (n *Node) startTcpServer() {
 
 	listenner, err := net.Listen("tcp", n.TcpPort)
 	if err != nil {
-		log.Fatalf("[%s] Erro ao iniciar servidor TCP: %v", n.ID, err)
+		log.Fatalf("[%s][TCP] Erro ao iniciar servidor TCP: %v", n.ID, err)
 	}
 
-	log.Printf("[%s] Servidor TCP iniciado na porta %s", n.ID, n.TcpPort)
+	log.Printf("[%s][TCP] Servidor TCP iniciado na porta %s", n.ID, n.TcpPort)
 
 	for {
 		conn, err := listenner.Accept()
 		if err != nil {
-			log.Printf("[%s] Erro ao aceitar conexão TCP: %v", n.ID, err)
+			log.Printf("[%s][TCP]Erro ao aceitar conexão TCP: %v", n.ID, err)
 			continue
 		}
 
@@ -51,27 +51,27 @@ func (n *Node) handleTcpAccept(conn net.Conn) {
 
 	scanner := bufio.NewReader(conn)
 
-	log.Printf("[%s] Conexão aceita %s", n.ID, conn.RemoteAddr().String())
+	log.Printf("[%s][TCP] Conexão aceita %s", n.ID, conn.RemoteAddr().String())
 
 	data, err := scanner.ReadBytes('\n')
 	if err != nil {
-		log.Printf("[%s] Erro ao ler dados TCP: %v", n.ID, err)
+		log.Printf("[%s][TCP] Erro ao ler dados: %v", n.ID, err)
 		return
 	}
 
 	var msg Mensagem
 	err = json.Unmarshal(data, &msg)
 	if err != nil {
-		log.Printf("[%s] Erro ao processar mensagem TCP: %v", n.ID, err)
+		log.Printf("[%s][TCP] Erro ao processar mensagem: %v", n.ID, err)
 		return
 	}
 
 	switch msg.Type {
 	case Forward:
-		log.Printf("[%s] Comando recebido via TCP para encaminhamento: %s", n.ID, string(msg.Payload))
+		log.Printf("[%s][TCP] Comando recebido para encaminhamento: %s", n.ID, string(msg.Payload))
 		n.handleForward(msg, conn)
 	default:
-		log.Printf("[%s] Tipo de mensagem TCP desconhecida: %s", n.ID, msg.Type)
+		log.Printf("[%s][TCP] Tipo de mensagem TCP desconhecida: %s", n.ID, msg.Type)
 	}
 
 }
@@ -244,27 +244,29 @@ func (n *Node) allocation() {
 			n.allocationMu.Unlock()
 		}()
 
-		if n.Raft.State() != raft.Leader {
-			return
-		}
+		for {
+			if n.Raft.State() != raft.Leader {
+				return
+			}
 
-		cmd := Command{
-			Type: Allocate,
-			ID:   fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
-		}
+			cmd := Command{
+				Type: Allocate,
+				ID:   fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
+			}
 
-		data, _ := json.Marshal(cmd)
+			data, _ := json.Marshal(cmd)
 
-		future := n.Raft.Apply(data, 5*time.Second)
-		if future.Error() != nil {
-			log.Printf("[%s] Erro ao aplicar comando de alocação: %v", n.ID, future.Error())
-		} else {
-			log.Printf("[%s] Comando de alocação aplicado com sucesso", n.ID)
-		}
+			future := n.Raft.Apply(data, 5*time.Second)
+			if future.Error() != nil {
+				log.Printf("[%s] Erro ao aplicar comando de alocação: %v", n.ID, future.Error())
+			}
 
-		allocate, ok := future.Response().(bool)
-		if !ok || !allocate {
-			return
+			allocate, ok := future.Response().(bool)
+			if !ok || !allocate {
+				return
+			} else {
+				log.Printf("[%s] Comando de alocação aplicado com sucesso", n.ID)
+			}
 		}
 
 	}()
