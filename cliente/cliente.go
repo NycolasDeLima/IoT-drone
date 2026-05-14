@@ -94,6 +94,22 @@ func main() {
 
 			muS.Unlock()
 
+		case strings.HasPrefix(topic, "setor/status"):
+
+			var novoEstado FSMstate
+
+			err := json.Unmarshal(msg.Payload(), &novoEstado)
+			if err != nil {
+				log.Printf("Erro ao converter estado: %v", err)
+				return
+			}
+
+			muE.Lock()
+			estado = novoEstado
+			muE.Unlock()
+
+			renderDashboard()
+
 		default:
 			fmt.Printf("[%s] %s\n", topic, payload)
 		}
@@ -136,7 +152,7 @@ func menu(client pahomqtt.Client, id string) {
 		fmt.Println("\n===== MENU =====")
 		fmt.Println("1 - Visualizar sensores")
 		fmt.Println("2 - Visualizar dados do sensor")
-		fmt.Println("3 - Visualizar drones")
+		fmt.Println("3 - Visualizar Estado do setor")
 		fmt.Println("4 - Enviar comando")
 		fmt.Println("5 - Sair")
 		fmt.Print("Escolha: ")
@@ -205,7 +221,13 @@ func menu(client pahomqtt.Client, id string) {
 				fmt.Printf("\nInscrição para dados do sensor %s cancelada.\n", dado)
 			}
 		case "3":
-			fmt.Println("Visualizando atuadores...")
+			fmt.Println("Visualizando Setor...")
+
+			client.Subscribe("setor/status", 1, nil)
+			input.ReadString('\n')
+			client.Unsubscribe("setor/status")
+			fmt.Printf("\nInscrição para status do sensor cancelada.\n")
+
 		case "4":
 
 			fmt.Println("\n===== ENVIANDO REQUEST =====")

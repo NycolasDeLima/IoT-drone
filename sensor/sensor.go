@@ -15,9 +15,10 @@ import (
 )
 
 type Mensagem struct {
-	Tipo string `json:"tipo"`
-	ID   string `json:"id"`
-	Dado string `json:"dado"`
+	Tipo    string `json:"tipo"`
+	ID      string `json:"id"`
+	Dado    string `json:"dado"`
+	Request string `json:"request"`
 }
 
 func main() {

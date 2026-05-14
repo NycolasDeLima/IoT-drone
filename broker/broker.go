@@ -119,6 +119,8 @@ func main() {
 
 	go node.cleanupDrones()
 
+	go node.shareStatus()
+
 	/*
 
 		go func() {

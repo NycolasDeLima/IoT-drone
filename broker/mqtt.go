@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"strconv"
 	"time"
 
@@ -82,13 +83,13 @@ func (n *Node) connectMQTTBroker(mqttPort string) {
 	})
 
 	opts.SetConnectionLostHandler(func(_ pahomqtt.Client, err error) {
-		log.Printf("[%s] Conexão MQTT perdida: %v — reconectando...", n.ID, err)
+		log.Printf("[%s][MQTT] Conexão MQTT perdida: %v — reconectando...", n.ID, err)
 	})
 
 	for {
 		client := pahomqtt.NewClient(opts)
 		if token := client.Connect(); token.Wait() && token.Error() != nil {
-			log.Printf("[%s] Aguardando broker MQTT subir: %v", n.ID, token.Error())
+			log.Printf("[%s][MQTT] Aguardando broker MQTT subir: %v", n.ID, token.Error())
 			time.Sleep(500 * time.Millisecond)
 			continue
 		}
@@ -105,7 +106,7 @@ func (n *Node) handleRequest(payload []byte) {
 	var msg MensagemMQTT
 	err := json.Unmarshal(payload, &msg)
 	if err != nil {
-		log.Printf("[%s] Erro ao processar mensagem MQTT: %v", n.ID, err)
+		log.Printf("[%s][MQTT] Erro ao processar mensagem MQTT: %v", n.ID, err)
 		return
 	}
 
@@ -123,7 +124,7 @@ func (n *Node) handleRequest(payload []byte) {
 		priority, err := strconv.Atoi(msg.Dado)
 
 		if err != nil {
-			log.Println("Erro ao coverter prioridade:", err)
+			log.Printf("%s][MQTT] Erro ao coverter prioridade: %v", n.ID, err)
 			return
 		}
 
@@ -138,20 +139,24 @@ func (n *Node) handleRequest(payload []byte) {
 
 		future := n.Raft.Apply(data, 5*time.Second)
 		if future.Error() != nil {
-			log.Printf("[%s] Erro ao aplicar comando recebido via MQTT: %v", n.ID, future.Error())
+			log.Printf("[%s][MQTT] Erro ao aplicar comando recebido via MQTT: %v", n.ID, future.Error())
 		} else {
-			log.Printf("[%s] Comando recebido via MQTT aplicado com sucesso", n.ID)
-
-			// Mutex!
+			response, ok := future.Response().(raftResponse)
+			if !ok || !response.applied {
+				log.Printf("[%s][MQTT] %s", n.ID, response.msg)
+				return
+			} else {
+				log.Printf("[%s][MQTT] Comando recebido via MQTT aplicado com sucesso:\n%s", n.ID, response.msg)
+			}
 			n.allocation()
 		}
 
 	} else {
 		err := n.ToLeader(data)
 		if err != nil {
-			log.Printf("[%s] Erro ao encaminhar comando para o líder via MQTT: %v", n.ID, err)
+			log.Printf("[%s][MQTT] Erro ao encaminhar comando para o líder via MQTT: %v", n.ID, err)
 		} else {
-			log.Printf("[%s] Comando recebido via MQTT encaminhado para o líder com sucesso", n.ID)
+			log.Printf("[%s][MQTT] Comando recebido via MQTT encaminhado para o líder com sucesso", n.ID)
 		}
 	}
 }
@@ -183,7 +188,7 @@ func (n *Node) listenAllocations() {
 				)
 				token.Wait()
 
-				log.Printf("[%s] Request enviada ao drone %s",
+				log.Printf("[%s][MQTT] Request enviada ao drone %s",
 					n.ID,
 					allocation.Drone.ID,
 				)
@@ -210,11 +215,55 @@ func (n *Node) listenAllocations() {
 				)
 				token.Wait()
 
-				log.Printf("[%s] Request enviada ao drone %s",
+				log.Printf("[%s][MQTT] Request enviada ao drone %s",
 					n.ID,
 					allocation.Drone.ID,
 				)
 			}
 		}
 	}
+}
+
+func (n *Node) shareStatus() {
+
+	ticker := time.NewTicker(5 * time.Second)
+
+	for range ticker.C {
+
+		n.FSM.droneMu.RLock()
+		n.FSM.requestMu.RLock()
+		n.FSM.procMu.Lock()
+		n.FSM.pendingMu.RLock()
+
+		state := FSMstate{
+			Drones:    make(map[string]Drone),
+			Requests:  make([]Request, len(n.FSM.Requests)),
+			Processed: make(map[string]int64),
+			Pending:   make(map[string]PendingRequest),
+		}
+
+		maps.Copy(state.Drones, n.FSM.Drones)
+
+		copy(state.Requests, n.FSM.Requests)
+
+		maps.Copy(state.Processed, n.FSM.Processed)
+
+		maps.Copy(state.Pending, n.FSM.Pending)
+
+		n.FSM.droneMu.RUnlock()
+		n.FSM.requestMu.RUnlock()
+		n.FSM.procMu.Unlock()
+		n.FSM.pendingMu.RUnlock()
+
+		payload, _ := json.Marshal(state)
+
+		token := n.mqtt.Publish(
+			"setor/status",
+			1,
+			false,
+			payload,
+		)
+		token.Wait()
+	}
+
 }

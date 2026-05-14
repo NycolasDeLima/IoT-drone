@@ -37,7 +37,7 @@ func (n *Node) startTcpServer() {
 	for {
 		conn, err := listenner.Accept()
 		if err != nil {
-			log.Printf("[%s][TCP]Erro ao aceitar conexão TCP: %v", n.ID, err)
+			log.Printf("[%s][TCP] Erro ao aceitar conexão TCP: %v", n.ID, err)
 			continue
 		}
 
@@ -91,8 +91,8 @@ func (n *Node) handleForward(msg Mensagem, conn net.Conn) {
 
 	future := n.Raft.Apply(msg.Payload, 5*time.Second)
 
-	if future.Error() != nil {
-		log.Printf("[%s] Erro ao aplicar comando recebido via TCP: %v", n.ID, future.Error())
+	if future.Error() != nil || future.Response().(raftResponse).applied {
+		log.Printf("[%s][TCP] Erro ao aplicar comando recebido: %v", n.ID, future.Error())
 		response := Mensagem{
 			Type:  Error,
 			ID:    msg.ID,
@@ -102,7 +102,7 @@ func (n *Node) handleForward(msg Mensagem, conn net.Conn) {
 		conn.Write(append(respData, '\n'))
 		return
 	} else {
-		log.Printf("[%s] Comando recebido via TCP aplicado com sucesso", n.ID)
+		log.Printf("[%s][TCP] Comando recebido aplicado com sucesso: \n%s", n.ID, future.Response().(raftResponse).msg)
 		n.allocation()
 	}
 
@@ -114,7 +114,7 @@ func (n *Node) handleForward(msg Mensagem, conn net.Conn) {
 	respData, _ := json.Marshal(response)
 	conn.Write(append(respData, '\n'))
 
-	log.Printf("[%s] Comando encaminhado processado e aplicado com sucesso: %s", n.ID, string(msg.Payload))
+	log.Printf("[%s][TCP] Comando encaminhado processado e aplicado com sucesso: \n%s", n.ID, future.Response().(raftResponse).msg)
 
 }
 
@@ -129,7 +129,7 @@ func (n *Node) ToLeader(data []byte) error {
 		return fmt.Errorf("Nenhum líder encontrado")
 	}
 
-	log.Printf("[%s] Leader: '%s'", n.ID, leader)
+	log.Printf("[%s][TCP] Leader: '%s'", n.ID, leader)
 
 	future := n.Raft.GetConfiguration()
 	if err := future.Error(); err != nil {
@@ -137,17 +137,17 @@ func (n *Node) ToLeader(data []byte) error {
 		return fmt.Errorf("Erro ao obter configuração do cluster: %v", err)
 	}
 
-	log.Printf("[%s] Líder identificado: %s (ID: %s)", n.ID, leader, leaderID)
+	log.Printf("[%s][TCP] Líder identificado: %s (ID: %s)", n.ID, leader, leaderID)
 
 	for _, p := range n.Peer {
 
 		id, ip, _, tcpPort, err := splitPeer(p)
 		if err != nil {
-			log.Printf("[%s] Erro ao processar peer %s: %v", n.ID, p, err)
+			log.Printf("[%s][TCP] Erro ao processar peer %s: %v", n.ID, p, err)
 			continue
 		}
 
-		log.Printf("[%s] Verificando peer %s (Raft: %s)", n.ID, p, id)
+		log.Printf("[%s][TCP] Verificando peer %s (Raft: %s)", n.ID, p, id)
 
 		if id == string(leaderID) {
 
@@ -165,7 +165,7 @@ func (n *Node) ToLeader(data []byte) error {
 	}
 
 	if leaderIP == "" {
-		log.Printf("[%s] Líder não encontrado entre os peers", n.ID)
+		log.Printf("[%s][TCP] Líder não encontrado entre os peers", n.ID)
 		return fmt.Errorf("Líder não encontrado entre os peers")
 	}
 
@@ -173,7 +173,7 @@ func (n *Node) ToLeader(data []byte) error {
 
 		conn, err := net.DialTimeout("tcp", leaderIP, 2*time.Second)
 		if err != nil {
-			log.Printf("[%s] Erro ao conectar ao líder: %v", n.ID, err)
+			log.Printf("[%s][TCP] Erro ao conectar ao líder: %v", n.ID, err)
 			continue
 		}
 
@@ -183,14 +183,14 @@ func (n *Node) ToLeader(data []byte) error {
 
 		_, err = conn.Write(append(msgData, '\n'))
 		if err != nil {
-			log.Printf("[%s] Erro ao enviar dados para o líder: %v", n.ID, err)
+			log.Printf("[%s][TCP] Erro ao enviar dados para o líder: %v", n.ID, err)
 			conn.Close()
 			continue
 		}
 
 		responseData, err := bufio.NewReader(conn).ReadBytes('\n')
 		if err != nil {
-			log.Printf("[%s] Erro ao ler resposta do líder: %v", n.ID, err)
+			log.Printf("[%s][TCP] Erro ao ler resposta do líder: %v", n.ID, err)
 			conn.Close()
 			continue
 		}
@@ -198,22 +198,22 @@ func (n *Node) ToLeader(data []byte) error {
 		var response Mensagem
 		err = json.Unmarshal(responseData, &response)
 		if err != nil {
-			log.Printf("[%s] Erro ao processar resposta do líder: %v", n.ID, err)
+			log.Printf("[%s][TCP] Erro ao processar resposta do líder: %v", n.ID, err)
 			conn.Close()
 			continue
 		}
 
 		switch response.Type {
 		case Ack:
-			log.Printf("[%s] Comando encaminhado para o líder com sucesso", n.ID)
+			log.Printf("[%s][TCP] Comando encaminhado para o líder com sucesso", n.ID)
 			conn.Close()
 			return nil
 		case Error:
-			log.Printf("[%s] Erro do líder ao processar comando: %v", n.ID, response.Error)
+			log.Printf("[%s][TCP] Erro do líder ao processar comando: %v", n.ID, response.Error)
 			conn.Close()
 			return fmt.Errorf("Erro do líder: %v", response.Error)
 		default:
-			log.Printf("[%s] Resposta inesperada do líder: %s", n.ID, response.Type)
+			log.Printf("[%s][TCP] Resposta inesperada do líder: %s", n.ID, response.Type)
 			conn.Close()
 			continue
 		}
@@ -258,14 +258,15 @@ func (n *Node) allocation() {
 
 			future := n.Raft.Apply(data, 5*time.Second)
 			if future.Error() != nil {
-				log.Printf("[%s] Erro ao aplicar comando de alocação: %v", n.ID, future.Error())
+				log.Printf("[%s][ALLOC] Erro ao aplicar comando de alocação: %v", n.ID, future.Error())
 			}
 
-			allocate, ok := future.Response().(bool)
-			if !ok || !allocate {
+			allocate, ok := future.Response().(raftResponse)
+			if !ok || !allocate.applied {
+				log.Printf("[%s][ALLOC] %s", n.ID, allocate.msg)
 				return
 			} else {
-				log.Printf("[%s] Comando de alocação aplicado com sucesso", n.ID)
+				log.Printf("[%s][ALLOC] Comando de alocação aplicado com sucesso\n%s", n.ID, allocate.msg)
 			}
 		}
 

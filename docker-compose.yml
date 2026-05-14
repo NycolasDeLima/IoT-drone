@@ -30,7 +30,7 @@ services:
     container_name: drone1
     depends_on:
       - node1
-    command: ["./app", "1", "1=node1:1883", "2=node2:1884", "3=node3:1885"]
+    command: ["./app", "1", "1=node1:1883", "2=node2:1883", "3=node3:1883"]
 
 
   node2:

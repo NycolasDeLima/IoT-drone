@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net"
 	"os"
 	"sort"
@@ -21,6 +22,7 @@ const (
 	AddRequest     = "ADD_REQUEST"
 	AddDrone       = "ADD_DRONE"
 	ReleaseDrone   = "RELEASE_DRONE"
+	RetryRequest   = "RETRY_REQUEST"
 	DroneHeartbeat = "DRONE_HEARTBEAT"
 	RemoveDrone    = "REMOVE_DRONE"
 
@@ -92,14 +94,22 @@ type FSMstate struct {
 	Pending   map[string]PendingRequest `json:"pending"`
 }
 
+type raftResponse struct {
+	msg     string
+	applied bool
+}
+
 func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 
 	var cmd Command
-	var msgReturn string
+	var response raftResponse
 
 	err := json.Unmarshal(logEntry.Data, &cmd)
 	if err != nil {
-		return err
+		return raftResponse{
+			msg:     "Erro: Erro ao processar comando",
+			applied: false,
+		}
 	}
 
 	now := cmd.Timestamp
@@ -110,8 +120,10 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 
 		if now-ts < 60 {
 			f.procMu.Unlock()
-			msgReturn = "Erro: Comando já executado"
-			return msgReturn
+			return raftResponse{
+				msg:     "Erro: Comando já executado",
+				applied: false,
+			}
 		}
 	}
 
@@ -136,7 +148,7 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 
 		f.requestMu.Unlock()
 
-		msgReturn = fmt.Sprintf("Request Adicionada: "+
+		response.msg = fmt.Sprintf("Request Adicionada: "+
 			"Setor: %s Cliente: %s Request: %s, Prioridade: %d ",
 			cmd.Setor, cmd.DispID, cmd.Dado, cmd.Priority)
 
@@ -146,7 +158,10 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 
 		if f.Requests.Len() == 0 {
 			f.requestMu.Unlock()
-			return "Erro: Sem requests na fila"
+			return raftResponse{
+				msg:     "Erro: Sem requests na fila",
+				applied: false,
+			}
 		}
 
 		f.droneMu.Lock()
@@ -170,7 +185,10 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 		if selectedDrone == "" {
 			f.droneMu.Unlock()
 			f.requestMu.Unlock()
-			return "Erro: Sem drone Disponível"
+			return raftResponse{
+				msg:     "Erro: Sem drone Disponível",
+				applied: false,
+			}
 		}
 
 		req := heap.Pop(&f.Requests).(Request)
@@ -181,7 +199,7 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 
 		sDrone := f.Drones[selectedDrone]
 
-		msgReturn = fmt.Sprintf("%s Alocado: "+
+		response.msg = fmt.Sprintf("%s Alocado: "+
 			"Setor: %s Cliente: %s Request: %s, Prioridade: %d ",
 			selectedDrone, cmd.Setor, cmd.DispID, cmd.Dado, cmd.Priority)
 
@@ -222,7 +240,7 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 		}
 		f.droneMu.Unlock()
 
-		msgReturn = fmt.Sprintf("Drone Adicionado: %s", cmd.DispID)
+		response.msg = fmt.Sprintf("Drone Adicionado: %s", cmd.DispID)
 
 	case ReleaseDrone:
 
@@ -236,7 +254,28 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 		delete(f.Pending, cmd.DispID)
 		f.pendingMu.Unlock()
 
-		msgReturn = fmt.Sprintf("Drone Liberado: %s", cmd.DispID)
+		response.msg = fmt.Sprintf("Drone Liberado: %s", cmd.DispID)
+
+	case RetryRequest:
+
+		f.pendingMu.Lock()
+		f.requestMu.Lock()
+
+		req := f.Pending[cmd.DispID]
+		heap.Push(&f.Requests, req.Request)
+		delete(f.Pending, cmd.DispID)
+		f.pendingMu.Unlock()
+		f.requestMu.Unlock()
+
+		f.droneMu.Lock()
+		d := f.Drones[cmd.DispID]
+		d.Status = Free
+		f.Drones[cmd.DispID] = d
+		f.droneMu.Unlock()
+
+		response.msg = fmt.Sprintf("Drone Liberado: %s\nRequest readicionada: "+
+			"Setor: %s Cliente: %s Request: %s, Prioridade: %d ",
+			cmd.DispID, req.Request.Setor, req.Request.ID, req.Request.Request, req.Request.Priority)
 
 	case DroneHeartbeat:
 
@@ -255,7 +294,7 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 		delete(f.Drones, cmd.DispID)
 		f.droneMu.Unlock()
 
-		msgReturn = fmt.Sprintf("Drone Removido: %s", cmd.DispID)
+		response.msg = fmt.Sprintf("Drone Removido: %s", cmd.DispID)
 
 	case TaskCompleted:
 
@@ -287,16 +326,18 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 
 		}
 
-		msgReturn = fmt.Sprintf("Request Completada: "+
+		response.msg = fmt.Sprintf("Request Completada: "+
 			"Setor: %s Cliente: %s Request: %s, Prioridade: %d Drone: %s",
 			cmd.Setor, cmd.DispID, cmd.Dado, cmd.Priority, cmd.DispID)
 
 	default:
-		msgReturn = fmt.Sprintf("Comando desconhecido: %s", cmd.Type)
+		response.msg = fmt.Sprintf("Comando desconhecido: %s", cmd.Type)
 
 	}
 
-	return msgReturn
+	response.applied = true
+
+	return response
 
 }
 
@@ -327,19 +368,13 @@ func (f *FSM) Snapshot() (raft.FSMSnapshot, error) {
 		Pending:   make(map[string]PendingRequest),
 	}
 
-	for k, v := range f.Drones {
-		state.Drones[k] = v
-	}
+	maps.Copy(state.Drones, f.Drones)
 
 	copy(state.Requests, f.Requests)
 
-	for k, v := range f.Processed {
-		state.Processed[k] = v
-	}
+	maps.Copy(state.Processed, f.Processed)
 
-	for k, v := range f.Pending {
-		state.Pending[k] = v
-	}
+	maps.Copy(state.Pending, f.Pending)
 
 	f.droneMu.RUnlock()
 	f.requestMu.RUnlock()
@@ -538,7 +573,7 @@ func (n *Node) cleanupDrones() {
 				if future.Error() != nil {
 					log.Printf("[%s] Erro ao aplicar comando de remoção do drone %s: %v", n.ID, id, future.Error())
 				} else {
-					log.Printf("[%s] Comando de remoção do drone %s aplicado com sucesso", n.ID, id)
+					log.Printf("[%s] Comando de remoção do drone %s aplicado com sucesso: \n%s", n.ID, id, future.Response().(raftResponse).msg)
 				}
 
 			}
@@ -581,11 +616,11 @@ func (n *Node) monitorPendingRequests() {
 			for d, task := range expired {
 
 				cmd := Command{
-					Type:      AddRequest,
+					Type:      RetryRequest,
 					ID:        fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
 					Dado:      task.Request.Request,
 					Priority:  task.Request.Priority,
-					DispID:    task.Request.ID,
+					DispID:    d,
 					Timestamp: time.Now().Unix(),
 					Setor:     task.Request.Setor,
 				}
@@ -596,24 +631,45 @@ func (n *Node) monitorPendingRequests() {
 				if future.Error() != nil {
 					log.Printf("[%s] Erro ao aplicar comando de re-adição da Request %s: %v", n.ID, task.Request.Request, future.Error())
 				} else {
-					log.Printf("[%s] Comando de re-adição de Request %s aplicado com sucesso", n.ID, task.Request.Request)
+					log.Printf("[%s] Comando de readicionar Request aplicado com sucesso: \n%s", n.ID, future.Response().(raftResponse).msg)
 				}
 
-				cmd = Command{
-					Type:      ReleaseDrone,
-					ID:        fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
-					DispID:    d,
-					Timestamp: time.Now().Unix(),
-				}
+				/*
+					cmd := Command{
+						Type:      AddRequest,
+						ID:        fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
+						Dado:      task.Request.Request,
+						Priority:  task.Request.Priority,
+						DispID:    task.Request.ID,
+						Timestamp: time.Now().Unix(),
+						Setor:     task.Request.Setor,
+					}
 
-				data, _ = json.Marshal(cmd)
+					data, _ := json.Marshal(cmd)
 
-				future = n.Raft.Apply(data, 5*time.Second)
-				if future.Error() != nil {
-					log.Printf("[%s] Erro ao aplicar comando de re-adição da Request %s: %v", n.ID, task.Request.Request, future.Error())
-				} else {
-					log.Printf("[%s] Comando de re-adição de Request %s aplicado com sucesso", n.ID, task.Request.Request)
-				}
+					future := n.Raft.Apply(data, 5*time.Second)
+					if future.Error() != nil {
+						log.Printf("[%s] Erro ao aplicar comando de re-adição da Request %s: %v", n.ID, task.Request.Request, future.Error())
+					} else {
+						log.Printf("[%s] Comando de re-adição de Request %s aplicado com sucesso", n.ID, task.Request.Request)
+					}
+
+					cmd = Command{
+						Type:      ReleaseDrone,
+						ID:        fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
+						DispID:    d,
+						Timestamp: time.Now().Unix(),
+					}
+
+					data, _ = json.Marshal(cmd)
+
+					future = n.Raft.Apply(data, 5*time.Second)
+					if future.Error() != nil {
+						log.Printf("[%s] Erro ao aplicar comando de re-adição da Request %s: %v", n.ID, task.Request.Request, future.Error())
+					} else {
+						log.Printf("[%s] Comando de re-adição de Request %s aplicado com sucesso", n.ID, task.Request.Request)
+					}
+				*/
 
 			}
 

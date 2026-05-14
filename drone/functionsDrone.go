@@ -241,6 +241,9 @@ func (d *Drone) reconectarComFailover() {
 
 	d.exibirPainel("Falha ao reconectar em todos os brokers alternativos")
 	d.Conected = false
+
+	go d.reconectarComFailover()
+
 }
 
 func (d *Drone) tentarConectarBroker(idBroker string, brokerURL string) bool {
