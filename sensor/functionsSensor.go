@@ -1,9 +1,72 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
+
+	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 )
+
+const (
+
+	// tipos de sensores
+	radar = "radar"
+	sonar = "sonar"
+
+	// estados radar
+	embarcacaoSuspeita  = "EMBARCAÇÃO SUSPEITA"
+	rotaBloqueada       = "ROTA BLOQUEADA" // TROCAR
+	embarcacaoEncalhada = "EMBARCAÇÃO ENCALHADA"
+	trafegoIntenso      = "TRAFEGO INTENSO"
+
+	// estados sonar
+	interferencia        = "INTERFERÊNCIA"
+	destrocos            = "DESTROÇOS"
+	objetoDetectado      = "OBJETO DETECTADO"
+	submersivelDetectado = "SUBMERSÍVEL DETECTADO"
+)
+
+func (s *Sensor) conectarMQTT(serverIP string) {
+
+	willMsg := Mensagem{
+		Tipo: s.Tipo,
+		ID:   s.ID,
+		Dado: "offline",
+	}
+
+	willPayload, _ := json.Marshal(willMsg)
+
+	opts := pahomqtt.NewClientOptions().
+		AddBroker(serverIP).
+		SetClientID(s.ID).
+		SetCleanSession(false).
+		SetWill(
+			"sensors/heartbeat/"+s.ID,
+			string(willPayload),
+			1,
+			false,
+		)
+
+	opts.SetOnConnectHandler(func(c pahomqtt.Client) {
+		log.Println("Sensor connected to broker")
+	})
+
+	opts.SetConnectionLostHandler(func(c pahomqtt.Client, err error) {
+		log.Printf("Sensor connection lost: %v", err)
+		exibirPainel(tipoSensor, id, dado, estado, "Servidor Desconectado")
+	})
+
+	client := pahomqtt.NewClient(opts)
+	if token := client.Connect(); token.Wait() && token.Error() != nil {
+		log.Fatal(token.Error())
+	}
+
+	s.Client = client
+	s.Connected = true
+
+}
 
 func mudarEstado(tipoSensor string) string {
 

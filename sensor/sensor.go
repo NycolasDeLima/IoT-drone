@@ -21,6 +21,14 @@ type Mensagem struct {
 	Request string `json:"request"`
 }
 
+type Sensor struct {
+	ID     string
+	Tipo   string
+	Client pahomqtt.Client
+
+	Connected bool
+}
+
 func main() {
 
 	var (
@@ -32,13 +40,13 @@ func main() {
 		dado     int
 		estado   string
 		handlers = map[string]func(int, string) int{
-			"bpm":  ajustarBPM,
-			"spo2": ajustarSpO2,
+			radar: ajustarBPM,
+			sonar: ajustarSpO2,
 		}
 	)
 
 	if len(os.Args) < 4 {
-		tipoSensor = "bpm"
+		tipoSensor = radar
 		serverIP = "broker:1883"
 
 		id = "1"
@@ -51,11 +59,11 @@ func main() {
 
 		switch tipoSensor {
 
-		case "bpm":
+		case radar:
 			dado = 75
 			estado = "repouso"
 
-		case "spo2":
+		case sonar:
 			dado = 98
 			estado = "normal"
 		default:
@@ -66,38 +74,13 @@ func main() {
 
 	}
 
-	willMsg := Mensagem{
-		Tipo: tipoSensor,
-		ID:   id,
-		Dado: "offline",
+	sensor := Sensor{
+		ID:        id,
+		Tipo:      tipoSensor,
+		Connected: false,
 	}
 
-	willPayload, _ := json.Marshal(willMsg)
-
-	opts := pahomqtt.NewClientOptions().
-		AddBroker(serverIP).
-		SetClientID(id).
-		SetCleanSession(false).
-		SetWill(
-			"sensors/heartbeat/"+tipoSensor+"_"+id,
-			string(willPayload),
-			1,
-			false,
-		)
-
-	opts.SetOnConnectHandler(func(c pahomqtt.Client) {
-		log.Println("Sensor connected to broker")
-	})
-
-	opts.SetConnectionLostHandler(func(c pahomqtt.Client, err error) {
-		log.Printf("Sensor connection lost: %v", err)
-		exibirPainel(tipoSensor, id, dado, estado, "Servidor Desconectado")
-	})
-
-	client := pahomqtt.NewClient(opts)
-	if token := client.Connect(); token.Wait() && token.Error() != nil {
-		log.Fatal(token.Error())
-	}
+	sensor.conectarMQTT(serverIP)
 
 	statusMsg := Mensagem{
 		Tipo: tipoSensor,
@@ -132,7 +115,7 @@ func main() {
 
 				jsondata, _ := json.Marshal(msg)
 
-				token := client.Publish(
+				token := sensor.Client.Publish(
 					"sensors/heartbeat/"+tipoSensor+"_"+id,
 					1,
 					false,
@@ -140,7 +123,7 @@ func main() {
 				)
 				token.Wait()
 
-				token = client.Publish(
+				token = sensor.Client.Publish(
 					"sensors/data/"+tipoSensor+"_"+id,
 					1,
 					false,
@@ -159,5 +142,5 @@ func main() {
 
 	log.Println("Sensor shutting down...")
 	cancel()
-	client.Disconnect(250)
+	sensor.Client.Disconnect(250)
 }
