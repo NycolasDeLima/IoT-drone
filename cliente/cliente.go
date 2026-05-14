@@ -67,7 +67,7 @@ func main() {
 
 			fmt.Println("\nLendo dados do sensor... Aperte ENTER para sair")
 
-			fmt.Printf("Sensor: %s | Dado: %s ",
+			fmt.Printf("Sensor: %s | Estado: %s ",
 				msgT.ID,
 				msgT.Dado,
 			)
@@ -144,6 +144,7 @@ func main() {
 func menu(client pahomqtt.Client, id string) {
 
 	var tipoSensor string
+	var priorityRequest string
 	var tipoRequest string
 
 	input := bufio.NewReader(os.Stdin)
@@ -181,8 +182,8 @@ func menu(client pahomqtt.Client, id string) {
 		case "2":
 
 			fmt.Println("\n===== TIPO DO Sensor =====")
-			fmt.Println("1 - bpm")
-			fmt.Println("2 - SpO2")
+			fmt.Println("1 - radar")
+			fmt.Println("2 - sonar")
 			fmt.Print("Escolha o tipo do Sensor: ")
 			tipoSensor, _ = input.ReadString('\n')
 			tipoSensor = strings.TrimSpace(tipoSensor)
@@ -190,10 +191,10 @@ func menu(client pahomqtt.Client, id string) {
 			switch tipoSensor {
 
 			case "1":
-				tipoSensor = "bpm"
+				tipoSensor = "radar"
 
 			case "2":
-				tipoSensor = "spo2"
+				tipoSensor = "sonar"
 
 			default:
 				fmt.Println("\nOpção inválida!")
@@ -231,19 +232,31 @@ func menu(client pahomqtt.Client, id string) {
 		case "4":
 
 			fmt.Println("\n===== ENVIANDO REQUEST =====")
-			fmt.Println("1 - Incêndio")
-			fmt.Println("2 - Acidente")
+			fmt.Println("1 - PATRULHA AÉREA")
+			fmt.Println("2 - VERIFICAR ROTA")
+			fmt.Println("3 - INVESTIGAR OBJETOS")
+			fmt.Println("4 - IDENTIFICAR EMBARCAÇÃO")
+			fmt.Println("5 - BUSCA E RESGATE")
 			fmt.Print("Escolha o tipo de Request: ")
-			tipoRequest, _ = input.ReadString('\n')
-			tipoRequest = strings.TrimSpace(tipoRequest)
+			priorityRequest, _ = input.ReadString('\n')
+			priorityRequest = strings.TrimSpace(priorityRequest)
 
-			switch tipoRequest {
+			switch priorityRequest {
 
 			case "1":
-				tipoRequest = "INCENDIO"
+				tipoRequest = patrulhaAerea
 
 			case "2":
-				tipoRequest = "ACIDENTE"
+				tipoRequest = verificarRota
+
+			case "3":
+				tipoRequest = investigarObjetos
+
+			case "4":
+				tipoRequest = identificarEmbarcacao
+
+			case "5":
+				tipoRequest = buscaResgate
 
 			default:
 				fmt.Println("\nOpção inválida!")
@@ -254,7 +267,7 @@ func menu(client pahomqtt.Client, id string) {
 				Tipo:    AddRequest,
 				ID:      id,
 				Request: fmt.Sprintf("%s-%d", tipoRequest, time.Now().UnixNano()),
-				Dado:    "1",
+				Dado:    priorityRequest,
 			}
 
 			data, _ := json.Marshal(cmd)

@@ -91,7 +91,7 @@ func (n *Node) handleForward(msg Mensagem, conn net.Conn) {
 
 	future := n.Raft.Apply(msg.Payload, 5*time.Second)
 
-	if future.Error() != nil || future.Response().(raftResponse).applied {
+	if future.Error() != nil {
 		log.Printf("[%s][TCP] Erro ao aplicar comando recebido: %v", n.ID, future.Error())
 		response := Mensagem{
 			Type:  Error,

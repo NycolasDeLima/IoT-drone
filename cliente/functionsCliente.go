@@ -20,6 +20,15 @@ var (
 const (
 	Allocate   = "ALLOCATE"
 	AddRequest = "ADD_REQUEST"
+
+	// requests radar
+	identificarEmbarcacao = "IDENTIFICAR EMBARCAÇÃO" // 4
+	verificarRota         = "VERIFICAR ROTA"         //2
+
+	//requests sonar
+	buscaResgate      = "BUSCA E RESGATE"    // 5
+	investigarObjetos = "INVESTIGAR OBJETOS" // 3
+	patrulhaAerea     = "PATRULHA AÉREA"     // 1
 )
 
 // ================= Protocolo de Comunicação ====================

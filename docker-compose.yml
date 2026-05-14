@@ -23,7 +23,14 @@ services:
     container_name: sensor1
     depends_on:
       - node1
-    command: ["./app", "bpm", "1", "node1:1883"]
+    command: ["./app", "radar", "1", "node1:1883"]
+
+  sensor12:
+    build: ./sensor
+    container_name: sensor12
+    depends_on:
+      - node1
+    command: ["./app", "sonar", "1", "node1:1883"]
 
   drone1:
     build: ./drone
@@ -46,6 +53,13 @@ services:
     volumes:
       - ./broker/data/node2:/app/data
 
+  drone2:
+    build: ./drone
+    container_name: drone2
+    depends_on:
+      - node1
+    command: ["./app", "2", "2=node2:1883", "1=node1:1883", "3=node3:1883"]
+
   node3:
     build: ./broker
     container_name: node3
@@ -58,3 +72,11 @@ services:
     command: ["./app", "3", "node3", "1883", "5003", "6002", "f", "1=node1:5001:6000", "2=node2:5002:6001"]
     volumes:
       - ./broker/data/node3:/app/data
+
+
+  drone3:
+    build: ./drone
+    container_name: drone3
+    depends_on:
+      - node1
+    command: ["./app", "3", "3=node3:1883", "2=node2:1883", "1=node1:1883"]

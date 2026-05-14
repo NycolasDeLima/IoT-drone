@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"strconv"
+	"time"
 
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 )
@@ -15,17 +17,30 @@ const (
 	radar = "radar"
 	sonar = "sonar"
 
+	nadaDetectado = "NADA DETECTADO"
 	// estados radar
-	embarcacaoSuspeita  = "EMBARCAÇÃO SUSPEITA"
-	rotaBloqueada       = "ROTA BLOQUEADA" // TROCAR
-	embarcacaoEncalhada = "EMBARCAÇÃO ENCALHADA"
-	trafegoIntenso      = "TRAFEGO INTENSO"
+	embarcacaoSuspeita = "EMBARCAÇÃO SUSPEITA"
+	rotaBloqueada      = "ROTA BLOQUEADA"      // TROCAR
+	embarcacaoDeriva   = "EMBARCAÇÃO À DERIVA" // EMBARCAÇÃO A DERIVA
+	trafegoIntenso     = "TRAFEGO INTENSO"
 
 	// estados sonar
 	interferencia        = "INTERFERÊNCIA"
 	destrocos            = "DESTROÇOS"
 	objetoDetectado      = "OBJETO DETECTADO"
 	submersivelDetectado = "SUBMERSÍVEL DETECTADO"
+
+	// requests radar
+	identificarEmbarcacao = "IDENTIFICAR EMBARCAÇÃO" // 4
+	verificarRota         = "VERIFICAR ROTA"         //2
+
+	//requests sonar
+	buscaResgate      = "BUSCA E RESGATE"    // 5
+	investigarObjetos = "INVESTIGAR OBJETOS" // 3
+	patrulhaAerea     = "PATRULHA AÉREA"     // 1
+
+	// Adicionar Request
+	AddRequest = "ADD_REQUEST"
 )
 
 func (s *Sensor) conectarMQTT(serverIP string) {
@@ -51,11 +66,13 @@ func (s *Sensor) conectarMQTT(serverIP string) {
 
 	opts.SetOnConnectHandler(func(c pahomqtt.Client) {
 		log.Println("Sensor connected to broker")
+		s.Connected = true
 	})
 
 	opts.SetConnectionLostHandler(func(c pahomqtt.Client, err error) {
 		log.Printf("Sensor connection lost: %v", err)
-		exibirPainel(tipoSensor, id, dado, estado, "Servidor Desconectado")
+		s.Connected = false
+		s.exibirPainel()
 	})
 
 	client := pahomqtt.NewClient(opts)
@@ -82,88 +99,93 @@ func mudarEstado(tipoSensor string) string {
 	return estados[rand.Intn(len(estados))]
 }
 
-func ajustarBPM(atual int, estado string) int {
-	var alvo int
+func (s *Sensor) simularDeteccao() {
 
-	switch estado {
-	case "repouso":
-		alvo = 70
-	case "atividade":
-		alvo = 110
-	case "taquicardia":
-		alvo = 140
-	case "bradicardia":
-		alvo = 50
+	// Se já existe evento ativo
+	if s.EventoAtivo {
+
+		s.TempoEstado--
+
+		// terminou o evento
+		if s.TempoEstado <= 0 {
+
+			s.Estado = nadaDetectado
+			s.EventoAtivo = false
+
+			return
+		}
+
+		return
 	}
 
-	// aproxima suavemente do alvo
-	if atual < alvo {
-		atual += rand.Intn(3)
-	} else if atual > alvo {
-		atual -= rand.Intn(3)
+	// chance de gerar novo evento
+	if rand.Float64() < 0.50 {
+
+		eventos := []string{}
+
+		for estado := range s.SensorEventos {
+			eventos = append(eventos, estado)
+		}
+
+		novoEstado := eventos[rand.Intn(len(eventos))]
+
+		s.Estado = novoEstado
+		s.EventoAtivo = true
+
+		// evento dura entre 5 e 15 ciclos
+		s.TempoEstado = rand.Intn(10) + 5
+
+		// envia request
+		s.enviarRequest()
 	}
-
-	// pequeno ruído
-	atual += rand.Intn(3) - 1
-
-	return limitar(atual, 40, 180)
 }
 
-func ajustarSpO2(atual int, estado string) int {
-	var alvo int
+func (s *Sensor) enviarRequest() {
 
-	switch estado {
-	case "normal":
-		alvo = 98
-	case "leve":
-		alvo = 93
-	case "moderado":
-		alvo = 88
-	case "critico":
-		alvo = 82
+	evento := s.SensorEventos[s.Estado]
+
+	msg := Mensagem{
+		Tipo:    AddRequest,
+		ID:      s.ID,
+		Dado:    strconv.Itoa(evento.Priority),
+		Request: fmt.Sprintf("%s-%d", evento.Request, time.Now().UnixNano()),
 	}
 
-	// aproxima suavemente do alvo
-	if atual < alvo {
-		atual += rand.Intn(2)
-	} else if atual > alvo {
-		atual -= rand.Intn(2)
-	}
+	payload, _ := json.Marshal(msg)
 
-	// pequeno ruído
-	atual += rand.Intn(3) - 1
+	token := s.Client.Publish(
+		"drone/requests",
+		1,
+		false,
+		payload,
+	)
 
-	return limitar(atual, 70, 100)
+	token.Wait()
+
+	log.Printf(
+		"[SENSOR %s] Evento detectado: %s -> %s",
+		s.ID,
+		s.Estado,
+		evento.Request,
+	)
 }
 
-func limitar(valor, min, max int) int {
-	if valor < min {
-		return min
-	}
-	if valor > max {
-		return max
-	}
-	return valor
-}
-
-func exibirPainel(tipo, id string, dado int, estado string, status string) {
+func (s *Sensor) exibirPainel() {
 	limparTela()
 
 	fmt.Println("====================================")
 	fmt.Println("        MONITOR DE SENSOR")
 	fmt.Println("====================================")
-	fmt.Printf("Tipo do Sensor : %s\n", tipo)
-	fmt.Printf("ID             : %s\n", id)
-	fmt.Printf("Estado         : %s\n", estado)
-	fmt.Printf("Status         : %s\n", status)
-	fmt.Println("------------------------------------")
+	fmt.Printf("Tipo do Sensor : %s\n", s.Tipo)
+	fmt.Printf("ID             : %s\n", s.ID)
+	fmt.Printf("Estado         : %s\n", s.Estado)
 
-	switch tipo {
-	case "bpm":
-		fmt.Printf("Frequência Cardíaca: %d BPM\n", dado)
-	case "spo2":
-		fmt.Printf("Oxigenação (SpO2): %d%%\n", dado)
+	if s.Connected {
+		fmt.Printf("Status         : Conectado ao Setor\n")
+	} else {
+		fmt.Printf("Status         : Desconectado do Setor\n")
 	}
+	fmt.Println("------------------------------------")
 
 	fmt.Println("====================================")
 }

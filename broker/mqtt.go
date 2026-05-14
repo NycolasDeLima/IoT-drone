@@ -226,7 +226,7 @@ func (n *Node) listenAllocations() {
 
 func (n *Node) shareStatus() {
 
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(2 * time.Second)
 
 	for range ticker.C {
 

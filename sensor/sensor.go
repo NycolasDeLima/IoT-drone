@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"math/rand"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -21,12 +19,24 @@ type Mensagem struct {
 	Request string `json:"request"`
 }
 
+type Evento struct {
+	Estado   string
+	Request  string
+	Priority int
+}
+
 type Sensor struct {
 	ID     string
 	Tipo   string
+	Estado string
 	Client pahomqtt.Client
 
 	Connected bool
+
+	SensorEventos map[string]Evento
+
+	TempoEstado int
+	EventoAtivo bool
 }
 
 func main() {
@@ -36,13 +46,8 @@ func main() {
 		tipoSensor string
 		serverIP   string
 
-		msg      Mensagem
-		dado     int
-		estado   string
-		handlers = map[string]func(int, string) int{
-			radar: ajustarBPM,
-			sonar: ajustarSpO2,
-		}
+		eventos map[string]Evento
+		msg     Mensagem
 	)
 
 	if len(os.Args) < 4 {
@@ -60,24 +65,76 @@ func main() {
 		switch tipoSensor {
 
 		case radar:
-			dado = 75
-			estado = "repouso"
+
+			eventos = map[string]Evento{
+				embarcacaoSuspeita: {
+					Request:  identificarEmbarcacao,
+					Priority: 4,
+				},
+				embarcacaoDeriva: {
+					Request:  buscaResgate,
+					Priority: 5,
+				},
+				rotaBloqueada: {
+					Request:  verificarRota,
+					Priority: 2,
+				},
+				trafegoIntenso: {
+					Request:  patrulhaAerea,
+					Priority: 1,
+				},
+			}
 
 		case sonar:
-			dado = 98
-			estado = "normal"
+
+			eventos = map[string]Evento{
+				interferencia: {
+					Request:  patrulhaAerea,
+					Priority: 1,
+				},
+				destrocos: {
+					Request:  buscaResgate,
+					Priority: 5,
+				},
+				objetoDetectado: {
+					Request:  investigarObjetos,
+					Priority: 3,
+				},
+				submersivelDetectado: {
+					Request:  identificarEmbarcacao,
+					Priority: 4,
+				},
+			}
 		default:
-			dado = 75
-			estado = "repouso"
-			tipoSensor = "bpm"
+
+			tipoSensor = "sonar"
+			eventos = map[string]Evento{
+				interferencia: {
+					Request:  patrulhaAerea,
+					Priority: 1,
+				},
+				destrocos: {
+					Request:  buscaResgate,
+					Priority: 5,
+				},
+				objetoDetectado: {
+					Request:  investigarObjetos,
+					Priority: 3,
+				},
+				submersivelDetectado: {
+					Request:  identificarEmbarcacao,
+					Priority: 4,
+				},
+			}
 		}
 
 	}
 
 	sensor := Sensor{
-		ID:        id,
-		Tipo:      tipoSensor,
-		Connected: false,
+		ID:            id,
+		Tipo:          tipoSensor,
+		Connected:     false,
+		SensorEventos: eventos,
 	}
 
 	sensor.conectarMQTT(serverIP)
@@ -101,17 +158,11 @@ func main() {
 				return
 			case <-ticker.C:
 
-				if rand.Float64() < 0.01 {
-					estado = mudarEstado(tipoSensor)
-				}
+				msg.Tipo = sensor.Tipo
+				msg.ID = sensor.ID
+				msg.Dado = sensor.Estado
 
-				if handler, ok := handlers[tipoSensor]; ok {
-					dado = handler(dado, estado)
-				}
-
-				msg.Dado = strconv.Itoa(dado)
-				msg.ID = id
-				msg.Tipo = tipoSensor
+				sensor.simularDeteccao()
 
 				jsondata, _ := json.Marshal(msg)
 
@@ -131,7 +182,7 @@ func main() {
 				)
 				token.Wait()
 
-				exibirPainel(tipoSensor, id, dado, estado, "Conectado ao Servidor")
+				sensor.exibirPainel()
 			}
 		}
 	}()
