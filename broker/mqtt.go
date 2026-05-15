@@ -16,6 +16,7 @@ import (
 	"github.com/mochi-mqtt/server/v2/listeners"
 )
 
+// ================= Struct ====================
 type MensagemMQTT struct {
 	Tipo    string `json:"tipo"`
 	ID      string `json:"id"`
@@ -23,6 +24,7 @@ type MensagemMQTT struct {
 	Request string `json:"request"`
 }
 
+// ================= MQTT ====================
 // inicia servidor MQTT
 func startBroker(mqttPort string, id string) *mqtt.Server {
 
@@ -101,6 +103,8 @@ func (n *Node) connectMQTTBroker(mqttPort string) {
 
 }
 
+// ================= Handle Requests ====================
+
 func (n *Node) handleRequest(payload []byte) {
 
 	var msg MensagemMQTT
@@ -131,33 +135,37 @@ func (n *Node) handleRequest(payload []byte) {
 		cmd.Priority = priority
 		cmd.Dado = msg.Request
 
+	case DroneHeartbeat:
+		cmd.Dado = msg.Request
+
 	}
 
 	data, _ := json.Marshal(cmd)
+
+	if n.Raft == nil {
+		log.Println("Raft ainda não inicializado")
+		return
+	}
 
 	if n.Raft.State() == raft.Leader {
 
 		future := n.Raft.Apply(data, 5*time.Second)
 		if future.Error() != nil {
-			log.Printf("[%s][MQTT] Erro ao aplicar comando recebido via MQTT: %v", n.ID, future.Error())
+			log.Printf("[%s][MQTT] Erro ao aplicar comando recebido: %v", n.ID, future.Error())
 		} else {
 			response, ok := future.Response().(raftResponse)
 			if !ok || !response.applied {
 				log.Printf("[%s][MQTT] %s", n.ID, response.msg)
 				return
 			} else {
-				log.Printf("[%s][MQTT] Comando recebido via MQTT aplicado com sucesso:\n%s", n.ID, response.msg)
+				log.Printf("[%s][MQTT] Comando recebido aplicado com sucesso:\n%s", n.ID, response.msg)
 			}
 			n.allocation()
 		}
 
 	} else {
-		err := n.ToLeader(data)
-		if err != nil {
-			log.Printf("[%s][MQTT] Erro ao encaminhar comando para o líder via MQTT: %v", n.ID, err)
-		} else {
-			log.Printf("[%s][MQTT] Comando recebido via MQTT encaminhado para o líder com sucesso", n.ID)
-		}
+		log.Printf("[%s][MQTT] Comando recebido encaminhado para o líder", n.ID)
+		n.ToLeader(data)
 	}
 }
 

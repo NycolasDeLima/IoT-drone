@@ -27,13 +27,6 @@ type Drone struct {
 	Client   pahomqtt.Client
 }
 
-type Mensagem struct {
-	Tipo    string `json:"tipo"`
-	ID      string `json:"id"`
-	Dado    string `json:"dado"`
-	Request string `json:"request"`
-}
-
 func main() {
 
 	var (
@@ -70,7 +63,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go func() {
-		ticker := time.NewTicker(2 * time.Second)
+		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
@@ -79,9 +72,10 @@ func main() {
 			case <-ticker.C:
 
 				heartBeat := Mensagem{
-					Tipo: Heartbeat,
-					ID:   drone.ID,
-					Dado: "Conectado",
+					Tipo:    Heartbeat,
+					ID:      drone.ID,
+					Dado:    "Conectado",
+					Request: drone.Setor,
 				}
 				statusJSON, _ := json.Marshal(heartBeat)
 

@@ -1,21 +1,21 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
-	"sync"
+	"log"
+	"sort"
+	"strings"
 	"time"
+
+	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
 var (
-	sensores = make(map[string]Sensor)
-
 	loc, _ = time.LoadLocation("America/Sao_Paulo")
-
-	muS sync.RWMutex
-
-	estado FSMstate
-	muE    sync.RWMutex
 )
+
+// ================= Constantes ====================
 
 const (
 	Allocate   = "ALLOCATE"
@@ -31,7 +31,7 @@ const (
 	patrulhaAerea     = "PATRULHA AÉREA"     // 1
 )
 
-// ================= Protocolo de Comunicação ====================
+// ================= Structs ====================
 
 type Mensagem struct {
 	Tipo    string `json:"tipo"`
@@ -83,28 +83,28 @@ type FSMstate struct {
 	Pending   map[string]PendingRequest `json:"pending"`
 }
 
-func removerSensor() {
+func (cl *Cliente) removerSensor() {
 	for {
 		time.Sleep(5 * time.Second)
 
-		muS.Lock()
-		for key, sensor := range sensores {
+		cl.muS.Lock()
+		for key, sensor := range cl.Sensores {
 			if time.Since(sensor.UltimoVisto) > 5*time.Second {
 				sensor.Dado = "offline"
-				sensores[key] = sensor
+				cl.Sensores[key] = sensor
 			}
 		}
 
-		muS.Unlock()
+		cl.muS.Unlock()
 	}
 }
 
-func renderDashboard() {
+func (cl *Cliente) renderDashboard() {
 
 	limparTela()
 
-	muE.RLock()
-	defer muE.RUnlock()
+	cl.muE.RLock()
+	defer cl.muE.RUnlock()
 
 	fmt.Println("======================================================")
 	fmt.Println("               STATUS DO SETOR")
@@ -113,7 +113,7 @@ func renderDashboard() {
 	fmt.Println("\nDRONES:")
 	fmt.Printf("%-15s %-15s %-15s\n", "ID", "SETOR", "STATUS")
 
-	for _, d := range estado.Drones {
+	for _, d := range cl.Estado.Drones {
 
 		lastSeen := time.Unix(d.LastSeen, 0).In(loc)
 
@@ -135,7 +135,7 @@ func renderDashboard() {
 		"PRIORIDADE",
 	)
 
-	for _, r := range estado.Requests {
+	for _, r := range cl.Estado.Requests {
 
 		fmt.Printf(
 			"%-20s %-15s %-10d\n",
@@ -149,7 +149,7 @@ func renderDashboard() {
 
 	fmt.Println("\nREQUESTS EM EXECUÇÃO:")
 
-	for droneID, pending := range estado.Pending {
+	for droneID, pending := range cl.Estado.Pending {
 
 		tempo := time.Until(
 			time.Unix(pending.Deadline, 0),
@@ -164,4 +164,111 @@ func renderDashboard() {
 	}
 
 	fmt.Println("\n======================================================")
+}
+
+func (cl *Cliente) conectarMQTT(serverIP string) {
+
+	opts := pahomqtt.NewClientOptions().
+		AddBroker(serverIP).
+		SetClientID(cl.ID).
+		SetCleanSession(false)
+
+	opts.SetOnConnectHandler(func(c pahomqtt.Client) {
+
+		token := c.Subscribe("sensors/heartbeat/#", 1, nil)
+		token.Wait()
+		token = c.Subscribe("cliente/responses/"+cl.ID, 1, nil)
+		token.Wait()
+	})
+
+	opts.SetDefaultPublishHandler(func(c pahomqtt.Client, msg pahomqtt.Message) {
+		topic := msg.Topic()
+
+		var msgT Mensagem
+		err := json.Unmarshal(msg.Payload(), &msgT)
+		if err != nil {
+			log.Printf("Error parsing message: %v\n", err)
+			return
+		}
+
+		payload := string(msg.Payload())
+
+		switch {
+		case strings.HasPrefix(topic, "sensors/data/"):
+			limparTela()
+
+			fmt.Println("\nLendo dados do sensor... Aperte ENTER para sair")
+
+			fmt.Printf("Sensor: %s | Estado: %s ",
+				msgT.ID,
+				msgT.Dado,
+			)
+
+			cl.muS.RLock()
+			hora := cl.Sensores[msgT.Tipo+"_"+msgT.ID].UltimoVisto
+			status := cl.Sensores[msgT.Tipo+"_"+msgT.ID].Dado
+			cl.muS.RUnlock()
+
+			fmt.Printf("Status: %s | Hora: %s\n",
+				status,
+				hora.In(loc).Format("15:04:05"),
+			)
+		case strings.HasPrefix(topic, "sensors/heartbeat/"):
+
+			cl.muS.Lock()
+
+			cl.Sensores[msgT.Tipo+"_"+msgT.ID] = Sensor{
+				Tipo:        msgT.Tipo,
+				ID:          msgT.ID,
+				Dado:        msgT.Dado,
+				UltimoVisto: time.Now(),
+			}
+
+			cl.muS.Unlock()
+
+		case strings.HasPrefix(topic, "setor/status"):
+
+			var novoEstado FSMstate
+
+			err := json.Unmarshal(msg.Payload(), &novoEstado)
+			if err != nil {
+				log.Printf("Erro ao converter estado: %v", err)
+				return
+			}
+
+			cl.muE.Lock()
+			cl.Estado = novoEstado
+
+			sort.Slice(cl.Estado.Requests, func(i, j int) bool {
+
+				if cl.Estado.Requests[i].Priority == cl.Estado.Requests[j].Priority {
+					return cl.Estado.Requests[i].Timestamp < cl.Estado.Requests[j].Timestamp
+				}
+
+				return cl.Estado.Requests[i].Priority > cl.Estado.Requests[j].Priority
+			})
+			cl.muE.Unlock()
+
+			cl.renderDashboard()
+
+		default:
+			fmt.Printf("[%s] %s\n", topic, payload)
+		}
+	})
+
+	opts.SetConnectionLostHandler(func(c pahomqtt.Client, err error) {
+		limparTela()
+
+		fmt.Println(" ")
+		fmt.Println("----------------------------------------------------------")
+		fmt.Println("        Servidor Desconectado. Tentando Reconexão...      ")
+		fmt.Println("----------------------------------------------------------")
+	})
+
+	client := pahomqtt.NewClient(opts)
+	if token := client.Connect(); token.Wait() && token.Error() != nil {
+		log.Fatal(token.Error())
+	}
+
+	cl.Client = client
 }

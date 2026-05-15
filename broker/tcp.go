@@ -11,11 +11,14 @@ import (
 	"github.com/hashicorp/raft"
 )
 
+// ================= Constantes ====================
 const (
 	Forward = "FORWARD"
 	Ack     = "ACK"
 	Error   = "ERROR"
 )
+
+// ================= Struct ====================
 
 type Mensagem struct {
 	Type    string          `json:"type"` // FORWARD | ACK | ERROR
@@ -23,6 +26,8 @@ type Mensagem struct {
 	Payload json.RawMessage `json:"payload"`
 	Error   string          `json:"error,omitempty"`
 }
+
+// ================= TCP ====================
 
 func (n *Node) startTcpServer() {
 	// Implementação do servidor TCP para comunicação entre nós
@@ -51,8 +56,6 @@ func (n *Node) handleTcpAccept(conn net.Conn) {
 
 	scanner := bufio.NewReader(conn)
 
-	log.Printf("[%s][TCP] Conexão aceita %s", n.ID, conn.RemoteAddr().String())
-
 	data, err := scanner.ReadBytes('\n')
 	if err != nil {
 		log.Printf("[%s][TCP] Erro ao ler dados: %v", n.ID, err)
@@ -68,7 +71,7 @@ func (n *Node) handleTcpAccept(conn net.Conn) {
 
 	switch msg.Type {
 	case Forward:
-		log.Printf("[%s][TCP] Comando recebido para encaminhamento: %s", n.ID, string(msg.Payload))
+		//log.Printf("[%s][TCP] Comando recebido para encaminhamento: %s", n.ID, msg)
 		n.handleForward(msg, conn)
 	default:
 		log.Printf("[%s][TCP] Tipo de mensagem TCP desconhecida: %s", n.ID, msg.Type)
@@ -114,40 +117,31 @@ func (n *Node) handleForward(msg Mensagem, conn net.Conn) {
 	respData, _ := json.Marshal(response)
 	conn.Write(append(respData, '\n'))
 
-	log.Printf("[%s][TCP] Comando encaminhado processado e aplicado com sucesso: \n%s", n.ID, future.Response().(raftResponse).msg)
-
 }
 
-func (n *Node) ToLeader(data []byte) error {
+func (n *Node) ToLeader(data []byte) {
 
 	var leaderIP string
 
 	leader, leaderID := n.Raft.LeaderWithID()
 
 	if leader == "" {
-		log.Printf("[%s] Nenhum líder encontrado", n.ID)
-		return fmt.Errorf("Nenhum líder encontrado")
+		log.Printf("[%s][TCP] Nenhum líder encontrado", n.ID)
+		return
 	}
-
-	log.Printf("[%s][TCP] Leader: '%s'", n.ID, leader)
 
 	future := n.Raft.GetConfiguration()
 	if err := future.Error(); err != nil {
-		log.Printf("[%s] Erro ao obter configuração do cluster: %v", n.ID, err)
-		return fmt.Errorf("Erro ao obter configuração do cluster: %v", err)
+		log.Printf("[%s][TCP] Erro ao obter configuração do cluster: %v", n.ID, err)
+		return
 	}
-
-	log.Printf("[%s][TCP] Líder identificado: %s (ID: %s)", n.ID, leader, leaderID)
 
 	for _, p := range n.Peer {
 
 		id, ip, _, tcpPort, err := splitPeer(p)
 		if err != nil {
-			log.Printf("[%s][TCP] Erro ao processar peer %s: %v", n.ID, p, err)
 			continue
 		}
-
-		log.Printf("[%s][TCP] Verificando peer %s (Raft: %s)", n.ID, p, id)
 
 		if id == string(leaderID) {
 
@@ -166,7 +160,6 @@ func (n *Node) ToLeader(data []byte) error {
 
 	if leaderIP == "" {
 		log.Printf("[%s][TCP] Líder não encontrado entre os peers", n.ID)
-		return fmt.Errorf("Líder não encontrado entre os peers")
 	}
 
 	for i := 0; i < 3; i++ {
@@ -207,11 +200,10 @@ func (n *Node) ToLeader(data []byte) error {
 		case Ack:
 			log.Printf("[%s][TCP] Comando encaminhado para o líder com sucesso", n.ID)
 			conn.Close()
-			return nil
+			return
 		case Error:
 			log.Printf("[%s][TCP] Erro do líder ao processar comando: %v", n.ID, response.Error)
 			conn.Close()
-			return fmt.Errorf("Erro do líder: %v", response.Error)
 		default:
 			log.Printf("[%s][TCP] Resposta inesperada do líder: %s", n.ID, response.Type)
 			conn.Close()
@@ -220,9 +212,10 @@ func (n *Node) ToLeader(data []byte) error {
 
 	}
 
-	return fmt.Errorf("Falha ao encaminhar comando para o líder após múltiplas tentativas")
+	log.Printf("[%s][TCP] Falha ao encaminhar comando para o líder após múltiplas tentativas", n.ID)
 }
 
+// ================= Alocação de Requisições ====================
 func (n *Node) allocation() {
 
 	n.allocationMu.Lock()
@@ -263,7 +256,6 @@ func (n *Node) allocation() {
 
 			allocate, ok := future.Response().(raftResponse)
 			if !ok || !allocate.applied {
-				log.Printf("[%s][ALLOC] %s", n.ID, allocate.msg)
 				return
 			} else {
 				log.Printf("[%s][ALLOC] Comando de alocação aplicado com sucesso\n%s", n.ID, allocate.msg)

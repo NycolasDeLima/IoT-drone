@@ -10,6 +10,7 @@ import (
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
+// ================= Constantes ====================
 const (
 	Free = "Livre"
 	Busy = "Ocupado"
@@ -24,6 +25,15 @@ const (
 	Error = "ERROR"
 )
 
+// ================= Sructs ====================
+type Mensagem struct {
+	Tipo    string `json:"tipo"`
+	ID      string `json:"id"`
+	Dado    string `json:"dado"`
+	Request string `json:"request"`
+}
+
+// ================= Funções ====================
 func (d *Drone) executarTarefa(msg Mensagem) {
 
 	d.State = Busy
@@ -38,9 +48,9 @@ func (d *Drone) executarTarefa(msg Mensagem) {
 
 	// simula execução
 
-	for i := 1; i <= 10; i++ {
+	for i := 1; i <= 20; i++ {
 		time.Sleep(1 * time.Second)
-		d.TaskProcessing = fmt.Sprintf("%d%%", i*10)
+		d.TaskProcessing = fmt.Sprintf("%d%%", i*5)
 	}
 
 	d.State = Free

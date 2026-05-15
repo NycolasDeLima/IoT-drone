@@ -12,24 +12,12 @@ import (
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
-type Mensagem struct {
-	Tipo    string `json:"tipo"`
-	ID      string `json:"id"`
-	Dado    string `json:"dado"`
-	Request string `json:"request"`
-}
-
-type Evento struct {
-	Estado   string
-	Request  string
-	Priority int
-}
-
 type Sensor struct {
-	ID     string
-	Tipo   string
-	Estado string
-	Client pahomqtt.Client
+	ID       string
+	SensorID string
+	Tipo     string
+	Estado   string
+	Client   pahomqtt.Client
 
 	Connected bool
 
@@ -132,6 +120,7 @@ func main() {
 
 	sensor := Sensor{
 		ID:            id,
+		SensorID:      tipoSensor + "_" + id,
 		Tipo:          tipoSensor,
 		Connected:     false,
 		SensorEventos: eventos,
@@ -150,7 +139,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go func() {
-		ticker := time.NewTicker(2 * time.Second)
+		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
@@ -159,7 +148,7 @@ func main() {
 			case <-ticker.C:
 
 				msg.Tipo = sensor.Tipo
-				msg.ID = sensor.ID
+				msg.ID = sensor.SensorID
 				msg.Dado = sensor.Estado
 
 				sensor.simularDeteccao()
@@ -167,7 +156,7 @@ func main() {
 				jsondata, _ := json.Marshal(msg)
 
 				token := sensor.Client.Publish(
-					"sensors/heartbeat/"+tipoSensor+"_"+id,
+					"sensors/heartbeat/"+sensor.SensorID,
 					1,
 					false,
 					statusJSON,
@@ -175,7 +164,7 @@ func main() {
 				token.Wait()
 
 				token = sensor.Client.Publish(
-					"sensors/data/"+tipoSensor+"_"+id,
+					"sensors/data/"+sensor.SensorID,
 					1,
 					false,
 					jsondata,

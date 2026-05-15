@@ -11,6 +11,7 @@ import (
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
+// ================= Constantes ====================
 const (
 
 	// tipos de sensores
@@ -43,11 +44,26 @@ const (
 	AddRequest = "ADD_REQUEST"
 )
 
+// ================= Structs ====================
+type Mensagem struct {
+	Tipo    string `json:"tipo"`
+	ID      string `json:"id"`
+	Dado    string `json:"dado"`
+	Request string `json:"request"`
+}
+
+type Evento struct {
+	Estado   string
+	Request  string
+	Priority int
+}
+
+// ================= Funções ====================
 func (s *Sensor) conectarMQTT(serverIP string) {
 
 	willMsg := Mensagem{
 		Tipo: s.Tipo,
-		ID:   s.ID,
+		ID:   s.SensorID,
 		Dado: "offline",
 	}
 
@@ -55,10 +71,10 @@ func (s *Sensor) conectarMQTT(serverIP string) {
 
 	opts := pahomqtt.NewClientOptions().
 		AddBroker(serverIP).
-		SetClientID(s.ID).
+		SetClientID(s.SensorID).
 		SetCleanSession(false).
 		SetWill(
-			"sensors/heartbeat/"+s.ID,
+			"sensors/heartbeat/"+s.SensorID,
 			string(willPayload),
 			1,
 			false,
@@ -146,7 +162,7 @@ func (s *Sensor) enviarRequest() {
 
 	msg := Mensagem{
 		Tipo:    AddRequest,
-		ID:      s.ID,
+		ID:      s.SensorID,
 		Dado:    strconv.Itoa(evento.Priority),
 		Request: fmt.Sprintf("%s-%d", evento.Request, time.Now().UnixNano()),
 	}

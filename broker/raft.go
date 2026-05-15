@@ -10,13 +10,17 @@ import (
 	"net"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb"
+
+	bolt "go.etcd.io/bbolt"
 )
 
+// ================= Constantes ====================
 const (
 	Allocate       = "ALLOCATE"
 	AddRequest     = "ADD_REQUEST"
@@ -33,6 +37,7 @@ const (
 	TaskCompleted = "TASK_COMPLETED"
 )
 
+// ================= Structs ====================
 type AllocationRequests struct {
 	Tipo    string
 	Drone   Drone
@@ -98,6 +103,8 @@ type raftResponse struct {
 	msg     string
 	applied bool
 }
+
+// ================= Raft ====================
 
 func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 
@@ -199,9 +206,9 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 
 		sDrone := f.Drones[selectedDrone]
 
-		response.msg = fmt.Sprintf("%s Alocado: "+
+		response.msg = fmt.Sprintf("Drone %s Alocado: "+
 			"Setor: %s Cliente: %s Request: %s, Prioridade: %d ",
-			selectedDrone, cmd.Setor, cmd.DispID, cmd.Dado, cmd.Priority)
+			selectedDrone, req.Setor, req.ID, req.Request, req.Priority)
 
 		f.droneMu.Unlock()
 		f.requestMu.Unlock()
@@ -209,7 +216,7 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 		f.pendingMu.Lock()
 		f.Pending[selectedDrone] = PendingRequest{
 
-			Deadline: time.Now().Add(30 * time.Second).Unix(),
+			Deadline: time.Now().Add(40 * time.Second).Unix(),
 			Request:  req,
 		}
 
@@ -261,16 +268,27 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 		f.pendingMu.Lock()
 		f.requestMu.Lock()
 
-		req := f.Pending[cmd.DispID]
+		req, ok := f.Pending[cmd.DispID]
+		if !ok {
+			f.requestMu.Unlock()
+			f.pendingMu.Unlock()
+
+			return raftResponse{
+				msg:     "Erro: request pendente não encontrada",
+				applied: false,
+			}
+		}
+
 		heap.Push(&f.Requests, req.Request)
 		delete(f.Pending, cmd.DispID)
 		f.pendingMu.Unlock()
 		f.requestMu.Unlock()
 
 		f.droneMu.Lock()
-		d := f.Drones[cmd.DispID]
-		d.Status = Free
-		f.Drones[cmd.DispID] = d
+		if d, ok := f.Drones[cmd.DispID]; ok {
+			d.Status = Free
+			f.Drones[cmd.DispID] = d
+		}
 		f.droneMu.Unlock()
 
 		response.msg = fmt.Sprintf("Drone Liberado: %s\nRequest readicionada: "+
@@ -288,11 +306,23 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 
 		f.droneMu.Unlock()
 
+		response.msg = fmt.Sprintf("Drone: %s Setor: %s HeartBeat", cmd.DispID, cmd.Dado)
+
 	case RemoveDrone:
 
+		f.pendingMu.Lock()
+		f.requestMu.Lock()
 		f.droneMu.Lock()
+
+		if pending, ok := f.Pending[cmd.DispID]; ok {
+			heap.Push(&f.Requests, pending.Request)
+			delete(f.Pending, cmd.DispID)
+		}
 		delete(f.Drones, cmd.DispID)
+
 		f.droneMu.Unlock()
+		f.requestMu.Unlock()
+		f.pendingMu.Unlock()
 
 		response.msg = fmt.Sprintf("Drone Removido: %s", cmd.DispID)
 
@@ -328,7 +358,8 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 
 		response.msg = fmt.Sprintf("Request Completada: "+
 			"Setor: %s Cliente: %s Request: %s, Prioridade: %d Drone: %s",
-			cmd.Setor, cmd.DispID, cmd.Dado, cmd.Priority, cmd.DispID)
+			request.Request.Setor, request.Request.ID, request.Request.Request,
+			request.Request.Priority, cmd.DispID)
 
 	default:
 		response.msg = fmt.Sprintf("Comando desconhecido: %s", cmd.Type)
@@ -413,7 +444,7 @@ func (f *FSM) Restore(rc io.ReadCloser) error {
 	f.droneMu.Unlock()
 	f.pendingMu.Unlock()
 
-	log.Println("FSM restaurado via snapshot")
+	log.Println("[][RAFT] FSM restaurado via snapshot")
 
 	return nil
 }
@@ -441,15 +472,17 @@ func (s *snapshot) Persist(sink raft.SnapshotSink) error {
 
 func (s *snapshot) Release() {}
 
-// Raft Setup
+// ================= Raft Setup ====================
 
 func (n *Node) setupRaft() {
+
+	bolt.DefaultOptions.Logger = silentLogger{}
 
 	config := raft.DefaultConfig()
 	config.LocalID = raft.ServerID(n.ID)
 
-	config.SnapshotInterval = 30 * time.Second
-	config.SnapshotThreshold = 50
+	config.SnapshotInterval = 2 * time.Minute
+	config.SnapshotThreshold = 500
 
 	//config.Logger = log.New(os.Stdout, "["+n.ID+"] ", log.LstdFlags)
 
@@ -465,16 +498,20 @@ func (n *Node) setupRaft() {
 
 	heap.Init(&fsm.Requests)
 
+	log.SetOutput(filteredWriter{
+		writer: os.Stdout,
+	})
+
 	logStore, _ := raftboltdb.NewBoltStore("./data/raft-log-" + n.ID + ".db")
 	stableStore, _ := raftboltdb.NewBoltStore("./data/raft-stable-" + n.ID + ".db")
-	snapshots, _ := raft.NewFileSnapshotStore("./data", 1, os.Stdout)
+	snapshots, _ := raft.NewFileSnapshotStore("./data", 1, io.Discard)
 
 	addr, err := net.ResolveTCPAddr("tcp", n.IP+n.RaftPort)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	transport, err := raft.NewTCPTransport(n.RaftPort, addr, 3, 10*time.Second, os.Stdout)
+	transport, err := raft.NewTCPTransport(n.RaftPort, addr, 3, 10*time.Second, io.Discard)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -488,7 +525,7 @@ func (n *Node) setupRaft() {
 	n.FSM = fsm
 }
 
-// Peers
+// ================= Funções Auxiliares ====================
 
 func (n *Node) addPeers() {
 
@@ -506,7 +543,7 @@ func (n *Node) addPeers() {
 
 					id, ip, raftPort, _, err := splitPeer(p)
 					if err != nil {
-						log.Printf("[%s] Erro ao processar peer %s: %v", n.ID, p, err)
+						log.Printf("[%s][RAFT] Erro ao processar peer %s: %v", n.ID, p, err)
 						continue
 					}
 
@@ -515,10 +552,10 @@ func (n *Node) addPeers() {
 						0, 0)
 
 					if future.Error() != nil {
-						log.Printf("[%s] Erro ao adicionar peer %s: %v", n.ID, p, future.Error())
+						log.Printf("[%s][RAFT] Erro ao adicionar peer %s: %v", n.ID, p, future.Error())
 					} else {
 						added[p] = true
-						log.Printf("[%s] Peer adicionado: %s", n.ID, p)
+						log.Printf("[%s][RAFT] Peer adicionado: %s", n.ID, p)
 					}
 
 				}
@@ -527,8 +564,6 @@ func (n *Node) addPeers() {
 
 	}
 }
-
-// Drones
 
 func (n *Node) cleanupDrones() {
 
@@ -634,45 +669,24 @@ func (n *Node) monitorPendingRequests() {
 					log.Printf("[%s] Comando de readicionar Request aplicado com sucesso: \n%s", n.ID, future.Response().(raftResponse).msg)
 				}
 
-				/*
-					cmd := Command{
-						Type:      AddRequest,
-						ID:        fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
-						Dado:      task.Request.Request,
-						Priority:  task.Request.Priority,
-						DispID:    task.Request.ID,
-						Timestamp: time.Now().Unix(),
-						Setor:     task.Request.Setor,
-					}
-
-					data, _ := json.Marshal(cmd)
-
-					future := n.Raft.Apply(data, 5*time.Second)
-					if future.Error() != nil {
-						log.Printf("[%s] Erro ao aplicar comando de re-adição da Request %s: %v", n.ID, task.Request.Request, future.Error())
-					} else {
-						log.Printf("[%s] Comando de re-adição de Request %s aplicado com sucesso", n.ID, task.Request.Request)
-					}
-
-					cmd = Command{
-						Type:      ReleaseDrone,
-						ID:        fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
-						DispID:    d,
-						Timestamp: time.Now().Unix(),
-					}
-
-					data, _ = json.Marshal(cmd)
-
-					future = n.Raft.Apply(data, 5*time.Second)
-					if future.Error() != nil {
-						log.Printf("[%s] Erro ao aplicar comando de re-adição da Request %s: %v", n.ID, task.Request.Request, future.Error())
-					} else {
-						log.Printf("[%s] Comando de re-adição de Request %s aplicado com sucesso", n.ID, task.Request.Request)
-					}
-				*/
-
 			}
 
 		}
 	}
+}
+
+type filteredWriter struct {
+	writer io.Writer
+}
+
+func (f filteredWriter) Write(p []byte) (n int, err error) {
+
+	msg := string(p)
+
+	// ignora logs específicos
+	if strings.Contains(msg, "Rollback failed: tx closed") {
+		return len(p), nil
+	}
+
+	return f.writer.Write(p)
 }
