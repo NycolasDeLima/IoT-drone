@@ -302,11 +302,19 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 		if d, ok := f.Drones[cmd.DispID]; ok {
 			d.LastSeen = time.Now().Unix() // ou usar now
 			f.Drones[cmd.DispID] = d
+			response.msg = fmt.Sprintf("Drone: %s Setor: %s HeartBeat", cmd.DispID, cmd.Dado)
+		} else {
+
+			f.Drones[cmd.DispID] = Drone{
+				ID:       cmd.DispID,
+				Setor:    cmd.Setor,
+				Status:   Free,
+				LastSeen: time.Now().Unix(),
+			}
+			response.msg = fmt.Sprintf("Drone Adicionado: %s", cmd.DispID)
 		}
 
 		f.droneMu.Unlock()
-
-		response.msg = fmt.Sprintf("Drone: %s Setor: %s HeartBeat", cmd.DispID, cmd.Dado)
 
 	case RemoveDrone:
 

@@ -119,21 +119,20 @@ func (n *Node) handleForward(msg Mensagem, conn net.Conn) {
 
 }
 
-func (n *Node) ToLeader(data []byte) {
+func (n *Node) ToLeader(data []byte) (string, bool) {
 
 	var leaderIP string
 
 	leader, leaderID := n.Raft.LeaderWithID()
 
 	if leader == "" {
-		log.Printf("[%s][TCP] Nenhum líder encontrado", n.ID)
-		return
+		//fmt.Sprintf("[%s][TCP] Nenhum líder encontrado", n.ID)
+		return fmt.Sprintf("[%s][TCP] Nenhum líder encontrado", n.ID), false
 	}
 
 	future := n.Raft.GetConfiguration()
 	if err := future.Error(); err != nil {
-		log.Printf("[%s][TCP] Erro ao obter configuração do cluster: %v", n.ID, err)
-		return
+		return fmt.Sprintf("[%s][TCP] Erro ao obter configuração do cluster: %v", n.ID, err), false
 	}
 
 	for _, p := range n.Peer {
@@ -159,7 +158,7 @@ func (n *Node) ToLeader(data []byte) {
 	}
 
 	if leaderIP == "" {
-		log.Printf("[%s][TCP] Líder não encontrado entre os peers", n.ID)
+		return fmt.Sprintf("[%s][TCP] Líder não encontrado entre os peers", n.ID), false
 	}
 
 	for i := 0; i < 3; i++ {
@@ -198,9 +197,8 @@ func (n *Node) ToLeader(data []byte) {
 
 		switch response.Type {
 		case Ack:
-			log.Printf("[%s][TCP] Comando encaminhado para o líder com sucesso", n.ID)
 			conn.Close()
-			return
+			return fmt.Sprintf("[%s][TCP] Comando encaminhado para o líder com sucesso", n.ID), true
 		case Error:
 			log.Printf("[%s][TCP] Erro do líder ao processar comando: %v", n.ID, response.Error)
 			conn.Close()
@@ -212,7 +210,7 @@ func (n *Node) ToLeader(data []byte) {
 
 	}
 
-	log.Printf("[%s][TCP] Falha ao encaminhar comando para o líder após múltiplas tentativas", n.ID)
+	return fmt.Sprintf("[%s][TCP] Falha ao encaminhar comando para o líder após múltiplas tentativas", n.ID), false
 }
 
 // ================= Alocação de Requisições ====================

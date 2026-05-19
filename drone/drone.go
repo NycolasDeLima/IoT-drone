@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -25,6 +26,10 @@ type Drone struct {
 	Setor    string
 	Brokers  []string
 	Client   pahomqtt.Client
+
+	conMsg       string
+	reconnecting bool
+	mu           sync.Mutex
 }
 
 func main() {
@@ -41,7 +46,7 @@ func main() {
 		brokers = []string{}
 	} else {
 
-		id = os.Args[1]
+		id = "D-" + os.Args[1]
 		server = os.Args[2]
 		brokers = os.Args[3:]
 
@@ -58,7 +63,9 @@ func main() {
 		log.Fatalf("Erro ao processar server %s: %v\n", server, err)
 	}
 
-	drone.conectarMQTT(brokerID, brokerIP)
+	drone.Brokers = append(drone.Brokers, server)
+
+	drone.ConectarBroker(brokerID, brokerIP)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -79,15 +86,17 @@ func main() {
 				}
 				statusJSON, _ := json.Marshal(heartBeat)
 
-				token := drone.Client.Publish(
-					"drone/heartbeat/"+drone.ID,
-					1,
-					false,
-					statusJSON,
-				)
-				token.Wait()
+				if drone.Client != nil && drone.Client.IsConnected() {
+					token := drone.Client.Publish(
+						"drone/heartbeat/"+drone.ID,
+						1,
+						false,
+						statusJSON,
+					)
+					token.Wait()
+				}
 
-				drone.exibirPainel("")
+				drone.exibirPainel()
 			}
 		}
 	}()

@@ -47,6 +47,15 @@ type Sensor struct {
 	UltimoVisto time.Time
 }
 
+type Task struct {
+	ID       string
+	DroneID  string
+	Request  string
+	Priority string
+
+	Time time.Time
+}
+
 type Command struct {
 	Type      string `json:"type"` // ADD_REQUEST | ALLOCATE
 	ID        string `json:"id"`
@@ -166,18 +175,110 @@ func (cl *Cliente) renderDashboard() {
 	fmt.Println("\n======================================================")
 }
 
+func (cl *Cliente) visualizarRequests(completas bool) {
+
+	limparTela()
+
+	if completas {
+
+		fmt.Println("========================================")
+		fmt.Println("         REQUESTS COMPLETAS")
+		fmt.Println("========================================")
+
+		cl.muC.Lock()
+		defer cl.muC.Unlock()
+
+		if len(cl.Complete) == 0 {
+			fmt.Println("\nNenhuma request completa.")
+			return
+		}
+
+		fmt.Printf(
+			"\n%-25s %-15s %-10s %-15s %-10s\n",
+			"REQUEST",
+			"DRONE",
+			"PRIORIDADE",
+			"HORÁRIO",
+			"STATUS",
+		)
+
+		fmt.Println("----------------------------------------------------------------------------")
+
+		for _, req := range cl.Complete {
+
+			request := req.Request
+			if len(request) > 24 {
+				request = request[:24]
+			}
+
+			fmt.Printf(
+				"%-25s %-15s %-10s %-15s %-10s\n",
+				request,
+				req.DroneID,
+				req.Priority,
+				req.Time.In(loc).Format("15:04:05"),
+				"OK",
+			)
+		}
+
+		// limpa histórico após visualizar
+		cl.Complete = []Task{}
+
+	} else {
+
+		fmt.Println("========================================")
+		fmt.Println("         REQUESTS PENDENTES")
+		fmt.Println("========================================")
+
+		cl.muP.Lock()
+		defer cl.muP.Unlock()
+
+		if len(cl.Pending) == 0 {
+			fmt.Println("\nNenhuma request pendente.")
+			return
+		}
+
+		fmt.Printf(
+			"\n%-25s %-15s %-10s\n",
+			"REQUEST",
+			"CLIENTE",
+			"PRIORIDADE",
+		)
+
+		fmt.Println("--------------------------------------------------------")
+
+		for _, req := range cl.Pending {
+
+			request := req.Request
+			if len(request) > 24 {
+				request = request[:24]
+			}
+
+			fmt.Printf(
+				"%-25s %-15s %-10s\n",
+				request,
+				req.ID,
+				req.Priority,
+			)
+		}
+
+		// limpa pendentes após visualizar
+		cl.Pending = make(map[string]Task)
+	}
+}
+
 func (cl *Cliente) conectarMQTT(serverIP string) {
 
 	opts := pahomqtt.NewClientOptions().
 		AddBroker(serverIP).
-		SetClientID(cl.ID).
+		SetClientID(cl.ID + "-Cliente").
 		SetCleanSession(false)
 
 	opts.SetOnConnectHandler(func(c pahomqtt.Client) {
 
 		token := c.Subscribe("sensors/heartbeat/#", 1, nil)
 		token.Wait()
-		token = c.Subscribe("cliente/responses/"+cl.ID, 1, nil)
+		token = c.Subscribe("cliente/responses/", 1, nil)
 		token.Wait()
 	})
 
@@ -250,6 +351,36 @@ func (cl *Cliente) conectarMQTT(serverIP string) {
 			cl.muE.Unlock()
 
 			cl.renderDashboard()
+
+		case strings.HasPrefix(topic, "cliente/responses/"):
+
+			cl.muP.Lock()
+			delete(cl.Pending, msgT.Request)
+			cl.muP.Unlock()
+
+			req := Task{
+				DroneID:  msgT.ID,
+				Request:  msgT.Request,
+				Priority: msgT.Dado,
+				Time:     time.Now(),
+			}
+
+			cl.muC.Lock()
+			cl.Complete = append(cl.Complete, req)
+			cl.muC.Unlock()
+
+			cl.muP.Lock()
+
+		case strings.HasPrefix(topic, "drone/requests/"):
+
+			cl.muP.Lock()
+
+			cl.Pending[msgT.Request] = Task{
+				ID:       msgT.ID,
+				Request:  msgT.Request,
+				Priority: msgT.Dado,
+			}
+			cl.muP.Unlock()
 
 		default:
 			fmt.Printf("[%s] %s\n", topic, payload)

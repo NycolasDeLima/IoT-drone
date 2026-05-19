@@ -25,6 +25,12 @@ type Cliente struct {
 
 	Estado FSMstate
 	muE    sync.RWMutex
+
+	muC      sync.RWMutex
+	Complete []Task
+
+	muP     sync.RWMutex
+	Pending map[string]Task
 }
 
 func main() {
@@ -39,7 +45,7 @@ func main() {
 		id = "CLIENTE_1"
 	} else {
 
-		id = "CLIENTE_" + os.Args[1]
+		id = "C-" + os.Args[1]
 		serverIP = os.Args[2]
 
 	}
@@ -47,6 +53,8 @@ func main() {
 	cliente := Cliente{
 		ID:       id,
 		Sensores: make(map[string]Sensor),
+		Complete: []Task{},
+		Pending:  make(map[string]Task),
 	}
 
 	cliente.conectarMQTT(serverIP)
@@ -77,7 +85,9 @@ func (cl *Cliente) menu() {
 		fmt.Println("2 - Visualizar dados do sensor")
 		fmt.Println("3 - Visualizar Estado do setor")
 		fmt.Println("4 - Enviar comando")
-		fmt.Println("5 - Sair")
+		fmt.Println("5 - Visualizar requests pendentes")
+		fmt.Println("6 - Visualizar requests completas")
+		fmt.Println("7 - Sair")
 		fmt.Print("Escolha: ")
 
 		opcao, _ := input.ReadString('\n')
@@ -196,9 +206,24 @@ func (cl *Cliente) menu() {
 			token := cl.Client.Publish("drone/requests", 1, false, data)
 			token.Wait()
 
+			cl.muP.Lock()
+
+			cl.Pending[cmd.Request] = Task{
+				ID:       cl.ID,
+				Request:  cmd.Request,
+				Priority: cmd.Dado,
+			}
+			cl.muP.Unlock()
+
 			fmt.Printf("\nRequest %s enviado com sucesso!\n", cmd.ID)
 
 		case "5":
+			cl.visualizarRequests(false)
+			input.ReadString('\n')
+		case "6":
+			cl.visualizarRequests(true)
+			input.ReadString('\n')
+		case "7":
 			fmt.Println("Saindo...")
 			os.Exit(0)
 		default:

@@ -59,7 +59,7 @@ func (n *Node) connectMQTTBroker(mqttPort string) {
 
 	opts := pahomqtt.NewClientOptions().
 		AddBroker(brokerURL).
-		SetClientID(n.ID + "-client").
+		SetClientID(n.ID + "-Setor").
 		SetCleanSession(false).
 		SetAutoReconnect(true)
 
@@ -120,6 +120,7 @@ func (n *Node) handleRequest(payload []byte) {
 		Timestamp: time.Now().Unix(),
 		DispID:    msg.ID,
 		Setor:     n.ID,
+		Dado:      msg.Request,
 	}
 
 	switch msg.Tipo {
@@ -133,11 +134,6 @@ func (n *Node) handleRequest(payload []byte) {
 		}
 
 		cmd.Priority = priority
-		cmd.Dado = msg.Request
-
-	case DroneHeartbeat:
-		cmd.Dado = msg.Request
-
 	}
 
 	data, _ := json.Marshal(cmd)
@@ -165,7 +161,9 @@ func (n *Node) handleRequest(payload []byte) {
 
 	} else {
 		log.Printf("[%s][MQTT] Comando recebido encaminhado para o líder", n.ID)
-		n.ToLeader(data)
+		text, _ := n.ToLeader(data)
+		log.Printf("%s", text)
+
 	}
 }
 
@@ -207,8 +205,8 @@ func (n *Node) listenAllocations() {
 
 				payload := MensagemMQTT{
 
-					Tipo:    Task,
-					ID:      allocation.Request.ID,
+					Tipo:    allocation.Request.ID,
+					ID:      allocation.Drone.ID,
 					Dado:    strconv.Itoa(allocation.Request.Priority),
 					Request: allocation.Request.Request,
 				}
@@ -216,7 +214,7 @@ func (n *Node) listenAllocations() {
 				payloadJSON, _ := json.Marshal(payload)
 
 				token := n.mqtt.Publish(
-					"cliente/responses/"+allocation.Request.ID,
+					"cliente/responses/",
 					1,
 					false,
 					payloadJSON,
