@@ -1,9 +1,21 @@
-N ?= 1
-ip ?= localhost
-types ?= bpm
-typea ?= vmi
-udp ?= 8080
-tcp ?= 1883
+N ?= localhost
+First ?= t
+
+Nodes ?= localhost
+
+RaftPort ?= 6000
+TcpPort ?= 5001
+
+ID ?= 1
+
+type ?= radar
+
+BrokerIP ?= localhost
+MqttPort ?= 1883
+
+NODES_FORMATADOS_DRONE = $(foreach node,$(Nodes),$(node):$(MqttPort))
+
+NODES_FORMATADOS_SERVER = $(foreach node,$(Nodes),$(node):$(TcpPort):$(RaftPort))
 
 .PHONY: broker sensor atuador cliente compose_sensor compose_atuador compose_cliente compose_broker
 
@@ -11,39 +23,31 @@ build:
 	cd sensor && docker build -t sensor .
 	cd cliente && docker build -t cliente .
 	cd broker && docker build -t broker .
+	cd drone && docker build -t drone .
 
-compose_sensor:
-	for i in $$(seq 1 $(N)); do \
-		docker compose run -d sensor ./app $(types) $$i $(ip):$(udp); \
-	done
-
-compose_atuador:
-	for i in $$(seq 1 $(N)); do \
-		docker compose run -d atuador ./app $(typea) $$i $(ip):$(tcp); \
-	done
-
-compose_cliente:
-	for i in $$(seq 1 $(N)); do \
-		docker compose run cliente ./app $$i; $(ip):$(tcp)\
-	done
-
-compose_broker:
-	docker compose up broker
+setor:
 
 sensor:
 	cd sensor && for i in $$(seq 1 $(N)); do \
-		docker run -d sensor ./app $(types) $$i $(ip):$(udp); \
+		docker run -d sensor ./app $(type) $$i $(BrokerIP):$(MqttPort); \
 	done
 
-atuador:
-	cd atuador && for i in $$(seq 1 $(N)); do \
-		docker run -d atuador ./app $(typea) $$i $(ip):$(tcp); \
-	done
+drone:
+
+	cd drone && docker run -it atuador ./app $(ID) $(NODES_FORMATADOS_DRONE)
+
 
 cliente:
-	cd cliente && for i in $$(seq 1 $(N)); do \
-		docker run -d cliente ./app $$i $(ip):$(tcp); \
-	done
+
+	cd cliente && docker run -it cliente ./app $(ID) $(BrokerIP):$(MqttPort); \
+
 
 broker:
-	cd broker && docker run -p $(tcp):$(tcp)/tcp broker ./app $(id) $(tcp)
+	cd broker && docker run \
+		-p $(MqttPort):$(MqttPort)/tcp \
+		-p $(TcpPort):$(TcpPort)/tcp \
+		-p $(RaftPort):$(RaftPort)/tcp \
+		broker ./app $(ID) $(BrokerIP) \
+		$(MqttPort) $(RaftPort) $(TcpPort) \
+		$(First) $(NODES_FORMATADOS_SERVER)
+
