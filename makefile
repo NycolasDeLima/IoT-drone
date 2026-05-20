@@ -34,7 +34,7 @@ sensor:
 
 drone:
 
-	cd drone && docker run -it atuador ./app $(ID) $(NODES_FORMATADOS_DRONE)
+	cd drone && docker run -it drone ./app $(ID) $(NODES_FORMATADOS_DRONE)
 
 
 cliente:
