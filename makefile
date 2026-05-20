@@ -15,7 +15,7 @@ MqttPort ?= 1883
 
 NODES_FORMATADOS_DRONE = $(foreach node,$(Nodes),$(node):$(MqttPort))
 
-NODES_FORMATADOS_SERVER = $(foreach node,$(Nodes),$(node):$(TcpPort):$(RaftPort))
+NODES_FORMATADOS_SERVER = $(foreach node,$(Nodes),$(node):$(RaftPort):$(TcpPort))
 
 .PHONY: broker sensor atuador cliente compose_sensor compose_atuador compose_cliente compose_broker
 
