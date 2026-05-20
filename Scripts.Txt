@@ -1,6 +1,6 @@
 Geral:
 
-    Server: make broker MqttPort=1883 RaftPort=5001 TcpPort=6000 First=t ID=? BrokerIP=172.16.103. Nodes="2=172.16.103. 3=172.16.103."
+    Server: make broker MqttPort=1883 RaftPort=5001 TcpPort=6000 First=? ID=? BrokerIP=172.16.103. Nodes="2=172.16.103. 3=172.16.103."
 
     Drone: make drone MqttPort=1883 ID=? Nodes="1=172.16.103. 2=172.16.103. 3=172.16.103."
 

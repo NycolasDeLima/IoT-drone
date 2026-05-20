@@ -510,9 +510,21 @@ func (n *Node) setupRaft() {
 		writer: os.Stdout,
 	})
 
-	logStore, _ := raftboltdb.NewBoltStore("./data/raft-log-" + n.ID + ".db")
-	stableStore, _ := raftboltdb.NewBoltStore("./data/raft-stable-" + n.ID + ".db")
-	snapshots, _ := raft.NewFileSnapshotStore("./data", 1, io.Discard)
+	os.MkdirAll("./data", 0755)
+
+	logStore, err := raftboltdb.NewBoltStore("./data/raft-log-" + n.ID + ".db")
+	if err != nil {
+		log.Fatal(err)
+	}
+	stableStore, err := raftboltdb.NewBoltStore("./data/raft-stable-" + n.ID + ".db")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	snapshots, err := raft.NewFileSnapshotStore("./data", 1, io.Discard)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	addr, err := net.ResolveTCPAddr("tcp", n.IP+n.RaftPort)
 	if err != nil {
