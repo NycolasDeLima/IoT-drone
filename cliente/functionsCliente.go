@@ -367,6 +367,9 @@ func (cl *Cliente) conectarMQTT(serverIP string) {
 
 			cl.muC.Lock()
 			cl.Complete = append(cl.Complete, req)
+			if len(cl.Complete) > 10 {
+				cl.Complete = cl.Complete[len(cl.Complete)-10:]
+			}
 			cl.muC.Unlock()
 
 			cl.muP.Lock()
@@ -375,11 +378,32 @@ func (cl *Cliente) conectarMQTT(serverIP string) {
 
 			cl.muP.Lock()
 
+			if len(cl.Pending) >= 10 {
+
+				var oldestKey string
+				var oldestTime time.Time
+
+				first := true
+
+				for key, task := range cl.Pending {
+
+					if first || task.Time.Before(oldestTime) {
+						oldestKey = key
+						oldestTime = task.Time
+						first = false
+					}
+				}
+
+				delete(cl.Pending, oldestKey)
+			}
+
 			cl.Pending[msgT.Request] = Task{
 				ID:       msgT.ID,
 				Request:  msgT.Request,
 				Priority: msgT.Dado,
+				Time:     time.Now(),
 			}
+
 			cl.muP.Unlock()
 
 		default:

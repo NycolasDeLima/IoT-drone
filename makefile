@@ -39,7 +39,7 @@ drone:
 
 cliente:
 
-	cd cliente && docker run -it cliente ./app $(ID) $(BrokerIP):$(MqttPort); \
+	cd cliente && docker run -it cliente ./app $(ID) $(BrokerIP):$(MqttPort);
 
 
 broker:
