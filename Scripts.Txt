@@ -7,3 +7,35 @@ Geral:
     Sensor: make sensor MqttPort=1883 ID=? BrokerIP=172.16.103. type=?
 
     Cliente: make cliente MqttPort=1883 ID=? BrokerIP=172.16.103.
+
+Setor1:
+
+    make broker MqttPort=1883 RaftPort=5001 TcpPort=6000 First=t ID=1 BrokerIP=172.16.103.11 Nodes="2=172.16.103. 3=172.16.103."
+
+    pos = make broker MqttPort=1883 RaftPort=5001 TcpPort=6000 First=f ID=1 BrokerIP=172.16.103.11 Nodes="2=172.16.103. 3=172.16.103."
+
+    make drone MqttPort=1883 ID=1 Nodes="1=172.16.103.11 2=172.16.103. 3=172.16.103."
+
+    make sensor MqttPort=1883 ID=1 BrokerIP=172.16.103.11 type=radar
+
+    make cliente MqttPort=1883 ID=1 BrokerIP=172.16.103.11
+
+Setor2:
+
+    make broker MqttPort=1883 RaftPort=5001 TcpPort=6000 First=f ID=2 BrokerIP=172.16.103. Nodes="1=172.16.103.11 3=172.16.103."
+
+    make drone MqttPort=1883 ID=2 Nodes="2=172.16.103. 1=172.16.103.11 3=172.16.103."
+
+    make sensor MqttPort=1883 ID=2 BrokerIP=172.16.103. type=sonar
+
+    make cliente MqttPort=1883 ID=2 BrokerIP=172.16.103.
+
+Setor3:
+
+    make broker MqttPort=1883 RaftPort=5001 TcpPort=6000 First=f ID=3 BrokerIP=172.16.103. Nodes="1=172.16.103.11 2=172.16.103."
+
+    make drone MqttPort=1883 ID=3 Nodes="3=172.16.103. 1=172.16.103.11 2=172.16.103."
+
+    make sensor MqttPort=1883 ID=3 BrokerIP=172.16.103. type=sonar
+
+    make cliente MqttPort=1883 ID=3 BrokerIP=172.16.103.
