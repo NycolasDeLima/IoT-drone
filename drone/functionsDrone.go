@@ -31,6 +31,7 @@ type Mensagem struct {
 	ID      string `json:"id"`
 	Dado    string `json:"dado"`
 	Request string `json:"request"`
+	MsgID   string `json:"msgid"`
 }
 
 // ================= Funções ====================
@@ -48,9 +49,9 @@ func (d *Drone) executarTarefa(msg Mensagem) {
 
 	// simula execução
 
-	for i := 1; i <= 20; i++ {
+	for i := 1; i <= 10; i++ {
 		time.Sleep(1 * time.Second)
-		d.TaskProcessing = fmt.Sprintf("%d%%", i*5)
+		d.TaskProcessing = fmt.Sprintf("%d%%", i*10)
 	}
 
 	d.State = Free
@@ -62,6 +63,7 @@ func (d *Drone) executarTarefa(msg Mensagem) {
 		ID:      d.ID,
 		Request: msg.Request,
 		Dado:    msg.ID,
+		MsgID:   fmt.Sprintf("%s-%d", d.ID, time.Now().UnixNano()),
 	}
 
 	tarefaJSON, _ := json.Marshal(TarefaCompleta)
@@ -130,6 +132,7 @@ func (d *Drone) handleMensagemMQTT(c pahomqtt.Client, msg pahomqtt.Message) {
 				ID:      d.ID,
 				Request: msgT.Request,
 				Dado:    msgT.ID,
+				MsgID:   fmt.Sprintf("%s-%d", d.ID, time.Now().UnixNano()),
 			}
 
 			respData, _ := json.Marshal(response)
@@ -205,9 +208,10 @@ func (d *Drone) reconectarComFailover() {
 func (d *Drone) ConectarBroker(idBroker string, brokerURL string) bool {
 
 	addMsg := Mensagem{
-		Tipo: AddDrone,
-		ID:   d.ID,
-		Dado: "Conectado",
+		Tipo:  AddDrone,
+		ID:    d.ID,
+		Dado:  "Conectado",
+		MsgID: fmt.Sprintf("%s-%d", d.ID, time.Now().UnixNano()),
 	}
 
 	addPayload, _ := json.Marshal(addMsg)

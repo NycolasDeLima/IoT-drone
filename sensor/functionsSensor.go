@@ -50,6 +50,7 @@ type Mensagem struct {
 	ID      string `json:"id"`
 	Dado    string `json:"dado"`
 	Request string `json:"request"`
+	MsgID   string `json:"msgid"`
 }
 
 type Evento struct {
@@ -164,7 +165,8 @@ func (s *Sensor) enviarRequest() {
 		Tipo:    AddRequest,
 		ID:      s.SensorID,
 		Dado:    strconv.Itoa(evento.Priority),
-		Request: fmt.Sprintf("%s-%d", evento.Request, time.Now().UnixNano()),
+		Request: evento.Request,
+		MsgID:   fmt.Sprintf("%s-%d", s.ID, time.Now().UnixNano()),
 	}
 
 	payload, _ := json.Marshal(msg)

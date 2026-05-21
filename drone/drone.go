@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -83,6 +84,7 @@ func main() {
 					ID:      drone.ID,
 					Dado:    "Conectado",
 					Request: drone.Setor,
+					MsgID:   fmt.Sprintf("%s-%d", drone.ID, time.Now().UnixNano()),
 				}
 				statusJSON, _ := json.Marshal(heartBeat)
 

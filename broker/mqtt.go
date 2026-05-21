@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"maps"
 	"strconv"
@@ -22,6 +21,7 @@ type MensagemMQTT struct {
 	ID      string `json:"id"`
 	Dado    string `json:"dado"`
 	Request string `json:"request"`
+	MsgID   string `json:"msgid"`
 }
 
 // ================= MQTT ====================
@@ -116,7 +116,7 @@ func (n *Node) handleRequest(payload []byte) {
 
 	cmd := Command{
 		Type:      msg.Tipo,
-		ID:        fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
+		ID:        msg.MsgID,
 		Timestamp: time.Now().Unix(),
 		DispID:    msg.ID,
 		Setor:     n.ID,
@@ -214,7 +214,7 @@ func (n *Node) listenAllocations() {
 				payloadJSON, _ := json.Marshal(payload)
 
 				token := n.mqtt.Publish(
-					"cliente/responses/",
+					"cliente/responses",
 					1,
 					false,
 					payloadJSON,
@@ -232,7 +232,7 @@ func (n *Node) listenAllocations() {
 
 func (n *Node) shareStatus() {
 
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
 
 	for range ticker.C {
 
