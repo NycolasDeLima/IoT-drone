@@ -121,23 +121,24 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 
 	now := cmd.Timestamp
 
-	f.procMu.Lock()
+	if cmd.Type != DroneHeartbeat {
+		f.procMu.Lock()
 
-	if ts, ok := f.Processed[cmd.ID]; ok {
+		if ts, ok := f.Processed[cmd.ID]; ok {
 
-		if now-ts < 60 {
-			f.procMu.Unlock()
-			return raftResponse{
-				msg:     "Erro: Comando já executado",
-				applied: false,
+			if now-ts < 60 {
+				f.procMu.Unlock()
+				return raftResponse{
+					msg:     "Erro: Comando já executado",
+					applied: false,
+				}
 			}
 		}
+		// registra
+		f.Processed[cmd.ID] = cmd.Timestamp
+
+		f.procMu.Unlock()
 	}
-
-	// registra
-	f.Processed[cmd.ID] = cmd.Timestamp
-
-	f.procMu.Unlock()
 
 	switch cmd.Type {
 
