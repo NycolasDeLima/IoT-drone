@@ -207,15 +207,6 @@ func (d *Drone) reconectarComFailover() {
 
 func (d *Drone) ConectarBroker(idBroker string, brokerURL string) bool {
 
-	addMsg := Mensagem{
-		Tipo:  AddDrone,
-		ID:    d.ID,
-		Dado:  "Conectado",
-		MsgID: fmt.Sprintf("%s-%d", d.ID, time.Now().UnixNano()),
-	}
-
-	addPayload, _ := json.Marshal(addMsg)
-
 	opts := pahomqtt.NewClientOptions().
 		AddBroker(brokerURL).
 		SetClientID(d.ID + "-Drone").
@@ -224,6 +215,15 @@ func (d *Drone) ConectarBroker(idBroker string, brokerURL string) bool {
 		SetAutoReconnect(false)
 
 	opts.SetOnConnectHandler(func(c pahomqtt.Client) {
+
+		addMsg := Mensagem{
+			Tipo:  AddDrone,
+			ID:    d.ID,
+			Dado:  "Conectado",
+			MsgID: fmt.Sprintf("%s-%d", d.ID, time.Now().UnixNano()),
+		}
+
+		addPayload, _ := json.Marshal(addMsg)
 
 		d.Conected = true
 		token := c.Subscribe("drone/tasks/"+d.ID, 1, nil)

@@ -105,6 +105,18 @@ func (n *Node) handleForward(msg Mensagem, conn net.Conn) {
 		conn.Write(append(respData, '\n'))
 		return
 	} else {
+		response, ok := future.Response().(raftResponse)
+		if !ok || !response.applied {
+			log.Printf("[%s][TCP] Erro ao aplicar comando recebido: %v", n.ID, response.msg)
+			response := Mensagem{
+				Type:  Error,
+				ID:    msg.ID,
+				Error: future.Error().Error(),
+			}
+			respData, _ := json.Marshal(response)
+			conn.Write(append(respData, '\n'))
+			return
+		}
 		log.Printf("[%s][TCP] Comando recebido aplicado com sucesso: \n%s", n.ID, future.Response().(raftResponse).msg)
 		n.allocation()
 	}

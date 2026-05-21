@@ -121,19 +121,6 @@ func main() {
 
 	go node.shareStatus()
 
-	/*
-
-		go func() {
-			for {
-				time.Sleep(1 * time.Second)
-
-				if node.Raft.State() == raft.Leader {
-					node.allocation()
-				}
-			}
-			}()
-	*/
-
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig

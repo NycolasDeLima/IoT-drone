@@ -4,6 +4,6 @@ Geral:
 
     Drone: make drone MqttPort=1883 ID=? Nodes="1=172.16.103. 2=172.16.103. 3=172.16.103."
 
-    Sensor: make sensor MqttPort=1883 N=? BrokerIP=172.16.103. type=?
+    Sensor: make sensor MqttPort=1883 ID=? BrokerIP=172.16.103. type=?
 
     Cliente: make cliente MqttPort=1883 ID=? BrokerIP=172.16.103.

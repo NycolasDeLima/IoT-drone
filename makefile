@@ -25,12 +25,10 @@ build:
 	cd broker && docker build -t broker .
 	cd drone && docker build -t drone .
 
-setor:
 
 sensor:
-	cd sensor && for i in $$(seq 1 $(N)); do \
-		docker run -d sensor ./app $(type) $$i $(BrokerIP):$(MqttPort); \
-	done
+	docker run -it sensor ./app $(type) $(ID) $(BrokerIP):$(MqttPort); \
+
 
 drone:
 
