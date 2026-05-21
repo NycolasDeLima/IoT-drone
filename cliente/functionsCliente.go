@@ -166,7 +166,7 @@ func (cl *Cliente) renderDashboard() {
 		).Seconds()
 
 		fmt.Printf(
-			"Drone: %-10s | Request: %-20s | Cliente: %-10s Prioridade: %-5s | Timeout: %.0fs\n",
+			"Drone: %-10s | Request: %-20s | Cliente: %-10s | Prioridade: %d | Timeout: %.0fs\n",
 			droneID,
 			pending.Request.Request,
 			pending.Request.ID,
