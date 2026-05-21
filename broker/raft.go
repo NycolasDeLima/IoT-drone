@@ -217,7 +217,7 @@ func (f *FSM) Apply(logEntry *raft.Log) interface{} {
 		f.pendingMu.Lock()
 		f.Pending[selectedDrone] = PendingRequest{
 
-			Deadline: time.Now().Add(40 * time.Second).Unix(),
+			Deadline: time.Now().Add(30 * time.Second).Unix(),
 			Request:  req,
 		}
 
