@@ -18,6 +18,8 @@ var (
 // ================= Constantes ====================
 
 const (
+
+	// Comandos enviados por MQTT
 	Allocate   = "ALLOCATE"
 	AddRequest = "ADD_REQUEST"
 
@@ -33,14 +35,16 @@ const (
 
 // ================= Structs ====================
 
+// Estrutura padrão de mensagens MQTT
 type Mensagem struct {
-	Tipo    string `json:"tipo"`
-	ID      string `json:"id"`
-	Dado    string `json:"dado"`
-	Request string `json:"request"`
-	MsgID   string `json:"msgid"`
+	Tipo    string `json:"tipo"`    // Tipo de mensagem
+	ID      string `json:"id"`      // ID do Dispositivo
+	Dado    string `json:"dado"`    // Informação (ex: prioridade)
+	Request string `json:"request"` // Requisição
+	MsgID   string `json:"msgid"`   // ID único da mensagem
 }
 
+// Estrutura de um Sensor
 type Sensor struct {
 	Tipo        string `json:"tipo"`
 	ID          string `json:"id"`
@@ -48,6 +52,7 @@ type Sensor struct {
 	UltimoVisto time.Time
 }
 
+// Estrutura de uma tarefa
 type Task struct {
 	ID       string
 	DroneID  string
@@ -57,6 +62,7 @@ type Task struct {
 	Time time.Time
 }
 
+// Estrutura de comandos
 type Command struct {
 	Type      string `json:"type"` // ADD_REQUEST | ALLOCATE
 	ID        string `json:"id"`
@@ -66,6 +72,7 @@ type Command struct {
 	DroneID   string `json:"drone_id"`
 }
 
+// Estrutura de um Drone
 type Drone struct {
 	ID       string `json:"id"`
 	Setor    string `json:"setor"`
@@ -73,6 +80,7 @@ type Drone struct {
 	LastSeen int64  `json:"last_seen"`
 }
 
+// Estrutura de uma Requisição
 type Request struct {
 	ID        string `json:"id"`
 	Setor     string `json:"setor"`
@@ -81,11 +89,13 @@ type Request struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
+// Estrutura de uma requisição pendente
 type PendingRequest struct {
 	Deadline int64   `json:"deadline"`
 	Request  Request `json:"request"`
 }
 
+// Estado do Setor
 type FSMstate struct {
 	Drones    map[string]Drone          `json:"drones"`
 	Processed map[string]int64          `json:"processed"`
@@ -93,6 +103,7 @@ type FSMstate struct {
 	Pending   map[string]PendingRequest `json:"pending"`
 }
 
+// Remove sensor por inatividade
 func (cl *Cliente) removerSensor() {
 	for {
 		time.Sleep(5 * time.Second)
@@ -109,6 +120,7 @@ func (cl *Cliente) removerSensor() {
 	}
 }
 
+// Mostra dashboard do sensor
 func (cl *Cliente) renderDashboard() {
 
 	limparTela()
@@ -178,6 +190,7 @@ func (cl *Cliente) renderDashboard() {
 	fmt.Println("\n======================================================")
 }
 
+// Mostra Requisições completas do setor
 func (cl *Cliente) visualizarRequests() {
 
 	limparTela()
@@ -224,6 +237,7 @@ func (cl *Cliente) visualizarRequests() {
 
 }
 
+// Conecta ao broker
 func (cl *Cliente) conectarMQTT(serverIP string) {
 
 	opts := pahomqtt.NewClientOptions().

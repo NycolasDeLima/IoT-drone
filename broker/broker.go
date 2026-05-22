@@ -14,27 +14,28 @@ import (
 	"github.com/hashicorp/raft"
 )
 
+// Estrura padrão do Nó
 type Node struct {
-	ID       string
-	IP       string
-	RaftPort string
-	TcpPort  string
-	Peer     []string
+	ID       string   // ID do nó
+	IP       string   // Endereço IP do Nó
+	RaftPort string   // Porta para comunicação do Raft
+	TcpPort  string   // Porta para comunicação TCP
+	Peer     []string // Lista de todos os Nós do sistema (ID=IP:PortaRaft:PortaTCP)
 
-	Raft *raft.Raft
-	FSM  *FSM
+	Raft *raft.Raft // Estrutura para o raft
+	FSM  *FSM       // Região Crítica (FSM)
 
 	mqttMu sync.Mutex
-	mqtt   pahomqtt.Client
+	mqtt   pahomqtt.Client // Cliente MQTT
 
-	allocating   bool
+	allocating   bool // Está alocando
 	allocationMu sync.Mutex
-	allocationCh chan AllocationRequests
+	allocationCh chan AllocationRequests // Comunicação entre Raft e MQTT
 }
 
 func main() {
 
-	// Parâmetros: id, ip, mqttPort, tcpPort, peer1, peer2, ...
+	// Variáveis de configuração
 	var (
 		id        string
 		ip        string
@@ -64,6 +65,7 @@ func main() {
 		peer = os.Args[7:]
 	}
 
+	// Configura o Nó
 	node := &Node{
 		ID:           id,
 		IP:           ip,
@@ -89,6 +91,8 @@ func main() {
 
 	node.setupRaft()
 
+	// Primeiro Nó a subir deve criar Cluster
+	// Demais Nós firstPeer = "f"
 	if firstPeer == "t" {
 
 		node.Raft.BootstrapCluster(raft.Configuration{
@@ -129,6 +133,8 @@ func main() {
 	mqttServer.Close()
 }
 
+// Separa Partes das informações dos Nós
+// ID, IP, RaftPort, TcpPort,
 func splitPeer(peer string) (string, string, string, string, error) {
 
 	parts := strings.Split(peer, "=")

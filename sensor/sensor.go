@@ -12,30 +12,31 @@ import (
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
+// Estrura padrão do sensor
 type Sensor struct {
-	ID       string
-	SensorID string
-	Tipo     string
-	Estado   string
-	Client   pahomqtt.Client
+	ID       string          // ID do sensor
+	SensorID string          // ID completo do sensor (Tipo + ID)
+	Tipo     string          // Tipo do Sensor
+	Estado   string          // Estado atual detectado
+	Client   pahomqtt.Client // Cliente MQTT
 
-	Connected bool
+	Connected bool // Está conectado ao broker
 
-	SensorEventos map[string]Evento
+	SensorEventos map[string]Evento // Mapa de eventos mapeados
 
-	TempoEstado int
-	EventoAtivo bool
+	TempoEstado int  // Tempo restante do evento
+	EventoAtivo bool // Se existe evento ativo
 }
 
 func main() {
 
+	// Variáveis de configuração
 	var (
 		id         string
 		tipoSensor string
 		serverIP   string
-
-		eventos map[string]Evento
-		msg     Mensagem
+		eventos    map[string]Evento
+		msg        Mensagem
 	)
 
 	if len(os.Args) < 4 {
@@ -52,6 +53,7 @@ func main() {
 
 		switch tipoSensor {
 
+		// Sensor Radar
 		case radar:
 
 			eventos = map[string]Evento{
@@ -73,6 +75,7 @@ func main() {
 				},
 			}
 
+			// Sensor Sonar
 		case sonar:
 
 			eventos = map[string]Evento{
@@ -155,6 +158,7 @@ func main() {
 
 				jsondata, _ := json.Marshal(msg)
 
+				// HeartBeat pro cliente
 				token := sensor.Client.Publish(
 					"sensors/heartbeat/"+sensor.SensorID,
 					1,

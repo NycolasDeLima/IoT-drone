@@ -1,5 +1,6 @@
 package main
 
+// Estrura de dados Lista de Prioridade
 type PriorityQueue []Request
 
 func (pq PriorityQueue) Len() int { return len(pq) }

@@ -12,29 +12,32 @@ import (
 
 // ================= Constantes ====================
 const (
+	// Estados do Drone
 	Free = "Livre"
 	Busy = "Ocupado"
 
+	// Comandos enviados por MQTT
 	TaskCompleted = "TASK_COMPLETED"
-
-	Heartbeat = "DRONE_HEARTBEAT"
-
-	AddDrone    = "ADD_DRONE"
-	RemoveDrone = "REMOVE_DRONE"
-
-	Error = "ERROR"
+	Heartbeat     = "DRONE_HEARTBEAT"
+	AddDrone      = "ADD_DRONE"
+	RemoveDrone   = "REMOVE_DRONE"
+	Error         = "ERROR"
 )
 
 // ================= Sructs ====================
+
+// Estrutura padrão de mensagens MQTT
 type Mensagem struct {
-	Tipo    string `json:"tipo"`
-	ID      string `json:"id"`
-	Dado    string `json:"dado"`
-	Request string `json:"request"`
-	MsgID   string `json:"msgid"`
+	Tipo    string `json:"tipo"`    // Tipo de mensagem
+	ID      string `json:"id"`      // ID do Dispositivo
+	Dado    string `json:"dado"`    // Informação
+	Request string `json:"request"` // Requisição
+	MsgID   string `json:"msgid"`   // ID único da mensagem
 }
 
 // ================= Funções ====================
+
+// Simula Drone executando Tarefe
 func (d *Drone) executarTarefa(msg Mensagem) {
 
 	d.State = Busy
@@ -58,7 +61,7 @@ func (d *Drone) executarTarefa(msg Mensagem) {
 	d.Task = ""
 	d.TaskProcessing = ""
 
-	TarefaCompleta := Mensagem{
+	TarefaCompleta := Mensagem{ // Mensagem de Tarefa Completa
 		Tipo:    TaskCompleted,
 		ID:      d.ID,
 		Request: msg.Request,
@@ -78,6 +81,7 @@ func (d *Drone) executarTarefa(msg Mensagem) {
 
 }
 
+// Mostra Painel de Drone
 func (d *Drone) exibirPainel() {
 
 	limparTela()
@@ -109,6 +113,7 @@ func limparTela() {
 	fmt.Print("\033[H\033[2J")
 }
 
+// Lida com Mensagem MQTT
 func (d *Drone) handleMensagemMQTT(c pahomqtt.Client, msg pahomqtt.Message) {
 
 	topic := msg.Topic()
@@ -157,6 +162,7 @@ func (d *Drone) handleMensagemMQTT(c pahomqtt.Client, msg pahomqtt.Message) {
 	}
 }
 
+// Tenta conectar em outros brokers
 func (d *Drone) reconectarComFailover() {
 	maxRetries := 3
 	delayEntreTentativas := 5 * time.Second
@@ -205,6 +211,7 @@ func (d *Drone) reconectarComFailover() {
 
 }
 
+// Conecta ao Broker MQTT
 func (d *Drone) ConectarBroker(idBroker string, brokerURL string) bool {
 
 	opts := pahomqtt.NewClientOptions().
@@ -268,6 +275,8 @@ func (d *Drone) ConectarBroker(idBroker string, brokerURL string) bool {
 	return true
 }
 
+// Separa Partes das informações dos Nós
+// ID, IP
 func splitPeer(peer string) (string, string, error) {
 
 	parts := strings.Split(peer, "=")

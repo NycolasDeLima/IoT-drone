@@ -13,6 +13,8 @@ import (
 
 // ================= Constantes ====================
 const (
+
+	// Tipo de Mensagem TCP
 	Forward = "FORWARD"
 	Ack     = "ACK"
 	Error   = "ERROR"
@@ -20,17 +22,18 @@ const (
 
 // ================= Struct ====================
 
+// Estrutura padrão de mensagens TCP
 type Mensagem struct {
-	Type    string          `json:"type"` // FORWARD | ACK | ERROR
-	ID      string          `json:"id"`
-	Payload json.RawMessage `json:"payload"`
-	Error   string          `json:"error,omitempty"`
+	Type    string          `json:"type"`            // Tipo de Mensagem TCP
+	ID      string          `json:"id"`              // ID único da mensagem (ID + Time)
+	Payload json.RawMessage `json:"payload"`         // Mensagem MQTT encaminhada
+	Error   string          `json:"error,omitempty"` // Erro
 }
 
 // ================= TCP ====================
 
+// Servidor TCP para comunicação entre nós
 func (n *Node) startTcpServer() {
-	// Implementação do servidor TCP para comunicação entre nós
 
 	listenner, err := net.Listen("tcp", n.TcpPort)
 	if err != nil {
@@ -51,6 +54,7 @@ func (n *Node) startTcpServer() {
 
 }
 
+// Lida com Mensagens TCP
 func (n *Node) handleTcpAccept(conn net.Conn) {
 	defer conn.Close()
 
@@ -69,9 +73,8 @@ func (n *Node) handleTcpAccept(conn net.Conn) {
 		return
 	}
 
-	switch msg.Type {
+	switch msg.Type { // Verifica se tipo de mensagem é válida
 	case Forward:
-		//log.Printf("[%s][TCP] Comando recebido para encaminhamento: %s", n.ID, msg)
 		n.handleForward(msg, conn)
 	default:
 		log.Printf("[%s][TCP] Tipo de mensagem TCP desconhecida: %s", n.ID, msg.Type)
@@ -79,9 +82,10 @@ func (n *Node) handleTcpAccept(conn net.Conn) {
 
 }
 
+// Lida com Mensagem TCP encaminhada para o líder
 func (n *Node) handleForward(msg Mensagem, conn net.Conn) {
 
-	if n.Raft.State() != raft.Leader {
+	if n.Raft.State() != raft.Leader { // Verifica se é líder
 		response := Mensagem{
 			Type:  Error,
 			ID:    msg.ID,
@@ -92,35 +96,48 @@ func (n *Node) handleForward(msg Mensagem, conn net.Conn) {
 		return
 	}
 
-	future := n.Raft.Apply(msg.Payload, 5*time.Second)
+	future := n.Raft.Apply(msg.Payload, 5*time.Second) // Aplica comando encaminhado
 
+	// Verifica se comando foi bem sucedido
 	if future.Error() != nil {
 		log.Printf("[%s][TCP] Erro ao aplicar comando recebido: %v", n.ID, future.Error())
+
 		response := Mensagem{
 			Type:  Error,
 			ID:    msg.ID,
 			Error: future.Error().Error(),
 		}
+
 		respData, _ := json.Marshal(response)
+
 		conn.Write(append(respData, '\n'))
 		return
+
 	} else {
+
 		response, ok := future.Response().(raftResponse)
+
 		if !ok || !response.applied {
+
 			log.Printf("[%s][TCP] Erro ao aplicar comando recebido: %v", n.ID, response.msg)
+
 			response := Mensagem{
 				Type:  Error,
 				ID:    msg.ID,
 				Error: future.Error().Error(),
 			}
+
 			respData, _ := json.Marshal(response)
+
 			conn.Write(append(respData, '\n'))
 			return
 		}
+
 		log.Printf("[%s][TCP] Comando recebido aplicado com sucesso: \n%s", n.ID, future.Response().(raftResponse).msg)
-		n.allocation()
+		n.allocation() // Chama alocação quando chega mensagem
 	}
 
+	// Mensagem de confirmação
 	response := Mensagem{
 		Type:  Ack,
 		ID:    msg.ID,
@@ -131,14 +148,15 @@ func (n *Node) handleForward(msg Mensagem, conn net.Conn) {
 
 }
 
+// Encaminha mensagem MQTT para o líder
 func (n *Node) ToLeader(data []byte) (string, bool) {
 
 	var leaderIP string
 
-	leader, leaderID := n.Raft.LeaderWithID()
+	leader, leaderID := n.Raft.LeaderWithID() // Pega endereço do líder
 
 	if leader == "" {
-		//fmt.Sprintf("[%s][TCP] Nenhum líder encontrado", n.ID)
+
 		return fmt.Sprintf("[%s][TCP] Nenhum líder encontrado", n.ID), false
 	}
 
@@ -147,6 +165,7 @@ func (n *Node) ToLeader(data []byte) (string, bool) {
 		return fmt.Sprintf("[%s][TCP] Erro ao obter configuração do cluster: %v", n.ID, err), false
 	}
 
+	// Procura líder na lista de nós
 	for _, p := range n.Peer {
 
 		id, ip, _, tcpPort, err := splitPeer(p)
@@ -163,7 +182,7 @@ func (n *Node) ToLeader(data []byte) (string, bool) {
 
 	}
 
-	env := Mensagem{
+	env := Mensagem{ // Mensagem para o líder
 		Type:    Forward,
 		ID:      fmt.Sprintf("%s-%d", n.ID, time.Now().UnixNano()),
 		Payload: data,
@@ -173,7 +192,7 @@ func (n *Node) ToLeader(data []byte) (string, bool) {
 		return fmt.Sprintf("[%s][TCP] Líder não encontrado entre os peers", n.ID), false
 	}
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 3; i++ { // Tenta encaminhar mensagem para o líder 3 vezes
 
 		conn, err := net.DialTimeout("tcp", leaderIP, 2*time.Second)
 		if err != nil {
@@ -226,8 +245,11 @@ func (n *Node) ToLeader(data []byte) (string, bool) {
 }
 
 // ================= Alocação de Requisições ====================
+
+// Manda comando de alocação para o Raft
 func (n *Node) allocation() {
 
+	// Verifica se loop de alocação já está rodando
 	n.allocationMu.Lock()
 
 	if n.allocating {
@@ -247,7 +269,7 @@ func (n *Node) allocation() {
 			n.allocationMu.Unlock()
 		}()
 
-		for {
+		for { // Loop roda enquanto houver Requisições e Drones livres
 			if n.Raft.State() != raft.Leader {
 				return
 			}

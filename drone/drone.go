@@ -14,19 +14,20 @@ import (
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
+// Estrura padrão do sensor
 type Drone struct {
-	ID    string
-	State string
+	ID    string // ID do drone
+	State string // Estado do Drone
 
-	TaskProcessing string
-	Task           string
-	SetorTask      string
-	ClientTask     string
+	TaskProcessing string // Porcentagem da tarefa
+	Task           string // Tarefa sendo Processada
+	SetorTask      string // Setor da Tarefa
+	ClientTask     string // Cliente da Tarfefa
 
-	Conected bool
-	Setor    string
-	Brokers  []string
-	Client   pahomqtt.Client
+	Conected bool            // Conectado ao broker
+	Setor    string          // Setor do broker
+	Brokers  []string        // Lista de Brokers
+	Client   pahomqtt.Client // Cliente MQTT
 
 	conMsg       string
 	reconnecting bool
@@ -35,6 +36,7 @@ type Drone struct {
 
 func main() {
 
+	// Variáveis de configuração
 	var (
 		id      string
 		server  string
@@ -53,6 +55,7 @@ func main() {
 
 	}
 
+	// Configurando Drone
 	drone := Drone{
 		ID:      id,
 		State:   Free,
@@ -79,7 +82,7 @@ func main() {
 				return
 			case <-ticker.C:
 
-				heartBeat := Mensagem{
+				heartBeat := Mensagem{ // Heartbeat
 					Tipo:    Heartbeat,
 					ID:      drone.ID,
 					Dado:    "Conectado",

@@ -16,12 +16,14 @@ import (
 )
 
 // ================= Struct ====================
+
+// Estrutura padrão de mensagens MQTT
 type MensagemMQTT struct {
-	Tipo    string `json:"tipo"`
-	ID      string `json:"id"`
-	Dado    string `json:"dado"`
-	Request string `json:"request"`
-	MsgID   string `json:"msgid"`
+	Tipo    string `json:"tipo"`    // Tipo de mensagem
+	ID      string `json:"id"`      // ID do Dispositivo
+	Dado    string `json:"dado"`    // Informação (ex: prioridade)
+	Request string `json:"request"` // Requisição
+	MsgID   string `json:"msgid"`   // ID único da mensagem
 }
 
 // ================= MQTT ====================
@@ -88,7 +90,7 @@ func (n *Node) connectMQTTBroker(mqttPort string) {
 		log.Printf("[%s][MQTT] Conexão MQTT perdida: %v — reconectando...", n.ID, err)
 	})
 
-	for {
+	for { // Se conecta ao broker criado
 		client := pahomqtt.NewClient(opts)
 		if token := client.Connect(); token.Wait() && token.Error() != nil {
 			log.Printf("[%s][MQTT] Aguardando broker MQTT subir: %v", n.ID, token.Error())
@@ -105,6 +107,8 @@ func (n *Node) connectMQTTBroker(mqttPort string) {
 
 // ================= Handle Requests ====================
 
+// Lida com mensagens MQTT
+// Se for líder chama apply, se não encaminha para o líder
 func (n *Node) handleRequest(payload []byte) {
 
 	var msg MensagemMQTT
@@ -114,6 +118,7 @@ func (n *Node) handleRequest(payload []byte) {
 		return
 	}
 
+	// Monta comando para o Raft
 	cmd := Command{
 		Type:      msg.Tipo,
 		ID:        msg.MsgID,
@@ -124,7 +129,7 @@ func (n *Node) handleRequest(payload []byte) {
 	}
 
 	switch msg.Tipo {
-	case AddRequest:
+	case AddRequest: // Para adicionar Requisição é necessário converter Prioridade string -> int
 
 		priority, err := strconv.Atoi(msg.Dado)
 
@@ -156,7 +161,7 @@ func (n *Node) handleRequest(payload []byte) {
 			} else {
 				log.Printf("[%s][MQTT] Comando recebido aplicado com sucesso:\n%s", n.ID, response.msg)
 			}
-			n.allocation()
+			n.allocation() // Chama alocação quando chega mensagem
 		}
 
 	} else {
@@ -167,12 +172,15 @@ func (n *Node) handleRequest(payload []byte) {
 	}
 }
 
+// ================= Encaminhamento ====================
+
+// Encaminha mensagens vindas do Raft para os clientes MQTT
 func (n *Node) listenAllocations() {
 
 	for allocation := range n.FSM.allocations {
 
 		switch allocation.Tipo {
-		case Task:
+		case Task: // Encaminha Requisição para Drone
 
 			if allocation.Drone.Setor == n.ID {
 
@@ -199,7 +207,7 @@ func (n *Node) listenAllocations() {
 					allocation.Drone.ID,
 				)
 			}
-		case TaskCompleted:
+		case TaskCompleted: // Sinal de requisição completa para os clientes
 
 			if allocation.Request.Setor == n.ID {
 
@@ -230,6 +238,7 @@ func (n *Node) listenAllocations() {
 	}
 }
 
+// Envia Estado do Setor
 func (n *Node) shareStatus() {
 
 	ticker := time.NewTicker(1 * time.Second)

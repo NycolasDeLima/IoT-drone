@@ -15,23 +15,25 @@ import (
 	pahomqtt "github.com/eclipse/paho.mqtt.golang"
 )
 
+// Estrutura padrão de um cliente
 type Cliente struct {
-	ID string
+	ID string // ID do cliente
 
-	Client pahomqtt.Client
+	Client pahomqtt.Client // Cliente MQTT
 
 	muS      sync.RWMutex
-	Sensores map[string]Sensor
+	Sensores map[string]Sensor // Mapa de sensores
 
-	Estado FSMstate
+	Estado FSMstate // Estado do setpr
 	muE    sync.RWMutex
 
 	muC      sync.RWMutex
-	Complete []Task
+	Complete []Task // Tarefas completas
 }
 
 func main() {
 
+	// Variáveis de configuração
 	var (
 		id       string
 		serverIP string
@@ -47,6 +49,7 @@ func main() {
 
 	}
 
+	// Configurando cliente
 	cliente := Cliente{
 		ID:       id,
 		Sensores: make(map[string]Sensor),
@@ -67,6 +70,7 @@ func main() {
 	cliente.Client.Disconnect(250)
 }
 
+// Menu do cliente
 func (cl *Cliente) menu() {
 
 	var tipoSensor string
@@ -190,7 +194,7 @@ func (cl *Cliente) menu() {
 				continue
 			}
 
-			cmd := Mensagem{
+			cmd := Mensagem{ // Envia requisição para o broker
 				Tipo:    AddRequest,
 				ID:      cl.ID,
 				Request: tipoRequest,
@@ -216,6 +220,7 @@ func (cl *Cliente) menu() {
 	}
 }
 
+// Limpa o terminal
 func limparTela() {
 	fmt.Print("\033[H\033[2J")
 }

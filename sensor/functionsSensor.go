@@ -19,10 +19,11 @@ const (
 	sonar = "sonar"
 
 	nadaDetectado = "NADA DETECTADO"
+
 	// estados radar
 	embarcacaoSuspeita = "EMBARCAÇÃO SUSPEITA"
-	rotaBloqueada      = "ROTA BLOQUEADA"      // TROCAR
-	embarcacaoDeriva   = "EMBARCAÇÃO À DERIVA" // EMBARCAÇÃO A DERIVA
+	rotaBloqueada      = "ROTA BLOQUEADA"
+	embarcacaoDeriva   = "EMBARCAÇÃO À DERIVA"
 	trafegoIntenso     = "TRAFEGO INTENSO"
 
 	// estados sonar
@@ -35,7 +36,7 @@ const (
 	identificarEmbarcacao = "IDENTIFICAR EMBARCAÇÃO" // 4
 	verificarRota         = "VERIFICAR ROTA"         //2
 
-	//requests sonar
+	// requests sonar
 	buscaResgate      = "BUSCA E RESGATE"    // 5
 	investigarObjetos = "INVESTIGAR OBJETOS" // 3
 	patrulhaAerea     = "PATRULHA AÉREA"     // 1
@@ -45,21 +46,26 @@ const (
 )
 
 // ================= Structs ====================
+
+// Estrutura padrão de mensagens MQTT
 type Mensagem struct {
-	Tipo    string `json:"tipo"`
-	ID      string `json:"id"`
-	Dado    string `json:"dado"`
-	Request string `json:"request"`
-	MsgID   string `json:"msgid"`
+	Tipo    string `json:"tipo"`    // Tipo de mensagem
+	ID      string `json:"id"`      // ID do Dispositivo
+	Dado    string `json:"dado"`    // Informação (ex: prioridade)
+	Request string `json:"request"` // Requisição
+	MsgID   string `json:"msgid"`   // ID único da mensagem
 }
 
+// Associa um evento a uma requisição e sua prioridade
 type Evento struct {
 	Estado   string
 	Request  string
 	Priority int
 }
 
-// ================= Funções ====================
+// ================= MQTT ====================
+
+// Conecta o sensor ao broker MQTT
 func (s *Sensor) conectarMQTT(serverIP string) {
 
 	willMsg := Mensagem{
@@ -102,20 +108,9 @@ func (s *Sensor) conectarMQTT(serverIP string) {
 
 }
 
-func mudarEstado(tipoSensor string) string {
+// ================= Simulação ====================
 
-	var estados []string
-
-	switch tipoSensor {
-	case "bpm":
-		estados = []string{"repouso", "atividade", "taquicardia", "bradicardia"}
-	case "spo2":
-		estados = []string{"normal", "leve", "moderado", "critico"}
-	}
-
-	return estados[rand.Intn(len(estados))]
-}
-
+// Simula detecção de eventos pelo sensor
 func (s *Sensor) simularDeteccao() {
 
 	// Se já existe evento ativo
@@ -157,6 +152,7 @@ func (s *Sensor) simularDeteccao() {
 	}
 }
 
+// Publica uma requisição no broker MQTT
 func (s *Sensor) enviarRequest() {
 
 	evento := s.SensorEventos[s.Estado]
@@ -188,6 +184,9 @@ func (s *Sensor) enviarRequest() {
 	)
 }
 
+// ================= Interface ====================
+
+// Exibe painel do sensor no terminal
 func (s *Sensor) exibirPainel() {
 	limparTela()
 
@@ -208,6 +207,7 @@ func (s *Sensor) exibirPainel() {
 	fmt.Println("====================================")
 }
 
+// Limpa o terminal
 func limparTela() {
 	fmt.Print("\033[H\033[2J")
 }
