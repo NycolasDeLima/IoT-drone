@@ -200,7 +200,7 @@ docker build -t sensor .
 - Type: Tipo do Sensor (sonar ou radar)
 - First: Indica se é o primeiro nó/setor a subir. Necessário para criar o Cluster. (Se primero first = t)
 - nodes_Setor: Conjunto de IPs, IDs e Portas dos setores separados por espaço. Modelo: <ID=IP:RaftPort:TcpPort>. Ex: ID<sub>1</sub>=172.xx.xxx.x1:6000:5000 ID<sub>2</sub>=172.xx.xxx.x2:6000:5000
-- nodes_Drone: Conjunto de IPs dos brokers MQTT junto com sua porta de uso separados por espaço. Modelo: <ID=IP:MqttPort>. Ex: ID<sub>1</sub>=172.xx.xxx.x1:1883 ID<sub>2</sub>=172.xx.xxx.x2:6000:5000
+- nodes_Drone: Conjunto de IPs dos brokers MQTT junto com sua porta de uso separados por espaço. Modelo: <ID=IP:MqttPort>. Ex: ID<sub>1</sub>=172.xx.xxx.x1:1883 ID<sub>2</sub>=172.xx.xxx.x2:1883
 
 - **Broker**:
 ```bash
@@ -222,7 +222,7 @@ docker run -it cliente ./app <ID> <BrokerIP>:<MqttPort>
 
 - **Drone**:
 ```bash
-cd atuador
+cd drone
 docker run -it drone ./app <ID> <nodes_Drone>
 ```
 
@@ -242,7 +242,7 @@ Caso esteja em um sistema Linux, é possível executar os containers facilmente 
 - MqttPort: Porta para protocolo MQTT
 - ID: Identificador do Dispositivo
 - type: Tipo do Sensor (sonar ou radar)
-- First: Indica se é o primeiro nó/setor a subir. Necessário para criar o Cluster. (Se primero first = t)
+- First: Indica se é o primeiro nó/setor a subir. Necessário para criar o Cluster. (Se primero, First = t)
 - Nodes: Conjunto de IPs e IDs dos setores separados por espaço. Modelo: <ID=IP>. Ex: "ID<sub>1</sub>=172.xx.xxx.x1 ID<sub>2</sub>=172.xx.xxx.x2" (necessita das aspas)
 
 - **Build**:
@@ -269,6 +269,15 @@ make drone MqttPort=<MqttPort> ID=<ID> Nodes="ID<sub>1</sub>=172.xx.xxx.x1 ID<su
 ```bash
 make sensor MqttPort=<MqttPort> ID=<ID> BrokerIP=<BrokerIP> type=<type>
 ```
+
+# 🧪 Testes Realizados
+
+- ✅ Concorrência entre múltiplos setores
+- ✅ Eleição automática de líder
+- ✅ Falha de drone
+- ✅ Falha de setor
+- ✅ Deduplicação de comandos
+- ✅ Replanejamento automático
 
 # ⚠️ Limitações
 
